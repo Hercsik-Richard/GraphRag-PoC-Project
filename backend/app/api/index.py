@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import ModelProvider, settings
 from app.database import async_session_maker, get_db_session
 from app.schemas import (
+    DeleteCurrentIndexResponseSchema,
     DocumentStatusSchema,
     IndexProgressSchema,
     IndexStatusResponseSchema,
@@ -339,6 +340,39 @@ async def upload_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload and index document",
         ) from e
+
+
+@router.delete("/current", response_model=DeleteCurrentIndexResponseSchema)
+async def delete_current_index(
+    db: AsyncSession = Depends(get_db_session),
+) -> DeleteCurrentIndexResponseSchema:
+    """Delete the currently loaded GraphRAG index and mark indexed documents as deleted."""
+    async with index_lock:
+        try:
+            graphrag_service.delete_current_index()
+            await db.execute(
+                text("""
+                    UPDATE indexed_documents
+                    SET status = 'deleted',
+                        entity_count = NULL,
+                        relationship_count = NULL
+                    WHERE status IN ('queued', 'processing', 'completed', 'superseded', 'failed')
+                """)
+            )
+            await db.commit()
+            index_jobs.clear()
+
+            return DeleteCurrentIndexResponseSchema(
+                status="deleted",
+                message="Current indexed graph was deleted",
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed to delete current index: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete current indexed graph",
+            ) from e
 
 
 @router.get("/progress/{document_id}", response_model=IndexProgressSchema)

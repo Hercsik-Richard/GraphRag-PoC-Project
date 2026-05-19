@@ -37,6 +37,7 @@ export const API_ENDPOINTS = {
   // Index endpoints
   INDEX: {
     UPLOAD: '/api/index/upload',
+    CURRENT: '/api/index/current',
     STATUS: '/api/index/status',
     PROGRESS: (id: string) => `/api/index/progress/${id}`,
   },

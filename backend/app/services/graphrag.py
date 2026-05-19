@@ -427,6 +427,19 @@ class GraphRAGService:
 
         self._invalidate_cached_index()
 
+    def delete_current_index(self) -> None:
+        """Delete the currently loaded GraphRAG corpus and generated index files."""
+        for input_file in self.input_dir.glob("*.txt"):
+            input_file.unlink(missing_ok=True)
+
+        for path in (self.output_dir, self.cache_dir):
+            if path.exists():
+                shutil.rmtree(path)
+            path.mkdir(parents=True, exist_ok=True)
+
+        self._invalidate_cached_index()
+        logger.info("Deleted current GraphRAG index and cleared in-memory graph caches")
+
     def _set_graphrag_env_vars(
         self,
         chat_provider: ModelProvider,

@@ -2,6 +2,7 @@
  * Upload document API functionality
  */
 import useSWRMutation from 'swr/mutation';
+import useSWR from 'swr';
 import { apiClient } from '@/shared/api/client';
 import { API_ENDPOINTS, type ModelProvider } from '@/shared/config/constants';
 
@@ -37,6 +38,30 @@ export interface IndexProgress {
   error: string | null;
 }
 
+export interface IndexedDocumentStatus {
+  id: string;
+  filename: string;
+  indexed_at: string;
+  status: string;
+  entity_count: number | null;
+  relationship_count: number | null;
+}
+
+export interface IndexStatusResponse {
+  documents: IndexedDocumentStatus[];
+  total_documents: number;
+}
+
+export interface DeleteCurrentIndexResponse {
+  status: string;
+  message: string;
+}
+
+async function fetcher<T>(url: string): Promise<T> {
+  const response = await apiClient.get<T>(url);
+  return response.data;
+}
+
 /**
  * Hook to upload a document for indexing
  */
@@ -62,6 +87,40 @@ export function useUploadDocument() {
   return {
     uploadDocument: trigger,
     isUploading: isMutating,
+    error,
+  };
+}
+
+export function useIndexStatus() {
+  const { data, error, isLoading, mutate } = useSWR<IndexStatusResponse>(
+    API_ENDPOINTS.INDEX.STATUS,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      refreshInterval: 30000,
+    }
+  );
+
+  return {
+    indexStatus: data,
+    isLoading,
+    isError: error,
+    mutate,
+  };
+}
+
+export function useDeleteCurrentIndex() {
+  const { trigger, isMutating, error } = useSWRMutation(
+    API_ENDPOINTS.INDEX.CURRENT,
+    async (url: string) => {
+      const response = await apiClient.delete<DeleteCurrentIndexResponse>(url);
+      return response.data;
+    }
+  );
+
+  return {
+    deleteCurrentIndex: trigger,
+    isDeleting: isMutating,
     error,
   };
 }

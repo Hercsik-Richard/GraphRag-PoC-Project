@@ -2,18 +2,25 @@
  * Chat page - Conversations + chat with graph drawer pattern
  */
 import { useMemo, useState, useCallback, useEffect, type ReactNode } from "react";
-import { Database, Map, Moon, Search, Sun } from "lucide-react";
+import { Database, Map, Moon, Search, Sun, Trash2 } from "lucide-react";
 import { ChatInterface, ConversationList } from "@/widgets/chat-interface";
 import { GraphVisualization } from "@/widgets/graph-visualization";
 import { NodeDetails } from "@/widgets/node-details";
-import { UploadButton } from "@/features/upload-document";
-import { useGraphData } from "@/entities/graph-node";
+import {
+  UploadButton,
+  useDeleteCurrentIndex,
+  useIndexStatus,
+  type IndexedDocumentStatus,
+} from "@/features/upload-document";
+import { useGraphData, useGraphStats, type GraphStats } from "@/entities/graph-node";
 import { cn, MODEL_PROVIDER_OPTIONS, type ModelProvider } from "@/shared";
 
 const MODEL_STORAGE_KEYS = {
   index: "graphrag-index-model-provider",
   query: "graphrag-query-model-provider",
 } as const;
+
+const ACTIVE_INDEX_STATUSES = new Set(["queued", "processing", "completed"]);
 
 function readSavedModelProvider(key: string, fallback: ModelProvider): ModelProvider {
   const saved = window.localStorage.getItem(key);
@@ -43,6 +50,16 @@ export function ChatPage() {
     readSavedModelProvider(MODEL_STORAGE_KEYS.query, "ollama")
   );
   const { mutate: refreshGraph } = useGraphData();
+  const { stats: graphStats, mutate: refreshGraphStats } = useGraphStats();
+  const { indexStatus, mutate: refreshIndexStatus } = useIndexStatus();
+  const { deleteCurrentIndex, isDeleting } = useDeleteCurrentIndex();
+  const activeDocument = useMemo(
+    () =>
+      indexStatus?.documents.find((document) =>
+        ACTIVE_INDEX_STATUSES.has(document.status)
+      ) ?? null,
+    [indexStatus]
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -59,8 +76,20 @@ export function ChatPage() {
     window.localStorage.setItem(MODEL_STORAGE_KEYS.query, queryModelProvider);
   }, [queryModelProvider]);
 
+  const refreshGraphState = useCallback(async () => {
+    await Promise.all([refreshGraph(), refreshGraphStats(), refreshIndexStatus()]);
+  }, [refreshGraph, refreshGraphStats, refreshIndexStatus]);
+
   const handleUploadComplete = () => {
-    refreshGraph();
+    void refreshGraphState();
+  };
+
+  const handleDeleteCurrentGraph = async () => {
+    if (!activeDocument && !graphStats?.indexed) return;
+    if (!confirm("Delete the currently indexed graph?")) return;
+
+    await deleteCurrentIndex();
+    await refreshGraphState();
   };
 
   const [
@@ -100,6 +129,13 @@ export function ChatPage() {
   return (
     <div className="min-h-screen w-full bg-linear-to-br from-background via-muted/45 to-primary/10 text-foreground">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10">
+        <GraphStatusBar
+          activeDocument={activeDocument}
+          graphStats={graphStats}
+          isDeleting={isDeleting}
+          onDelete={handleDeleteCurrentGraph}
+        />
+
         <header className="flex flex-col gap-4 rounded-xl border border-border/70 bg-card/95 px-6 py-5 shadow-[0_18px_36px_rgba(0,0,0,0.16)] sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
@@ -165,7 +201,7 @@ export function ChatPage() {
               <ChatInterface
                 conversationId={selectedConversationId}
                 queryModelProvider={queryModelProvider}
-                onMessageSent={() => refreshGraph()}
+                onMessageSent={() => void refreshGraph()}
                 onEntityClick={handleEntityClick}
                 onRelationshipClick={handleRelationshipClick}
               />
@@ -184,9 +220,78 @@ export function ChatPage() {
         queryModelProvider={queryModelProvider}
         onEntityClick={handleEntityClick}
         onRelationshipClick={handleRelationshipClick}
-        onMessageSent={() => refreshGraph()}
+        onMessageSent={() => void refreshGraph()}
       />
     </div>
+  );
+}
+
+function GraphStatusBar({
+  activeDocument,
+  graphStats,
+  isDeleting,
+  onDelete,
+}: {
+  activeDocument: IndexedDocumentStatus | null;
+  graphStats?: GraphStats;
+  isDeleting: boolean;
+  onDelete: () => void;
+}) {
+  const graphName = activeDocument
+    ? `${activeDocument.filename.replace(/\.[^/.]+$/, "")} graph`
+    : graphStats?.indexed
+      ? "Loaded graph"
+      : "No graph loaded";
+  const canDelete = Boolean(activeDocument || graphStats?.indexed) && !isDeleting;
+  const statusLabel =
+    activeDocument?.status === "processing" || activeDocument?.status === "queued"
+      ? "Indexing"
+      : graphStats?.indexed
+        ? "Active"
+        : "Empty";
+
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card/95 px-4 py-3 shadow-[0_14px_30px_rgba(0,0,0,0.12)] sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+          <Database className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+            Current Graph
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="truncate text-base font-bold text-foreground sm:text-lg">
+              {graphName}
+            </h2>
+            <span className="rounded-full border border-border/70 px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+              {statusLabel}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3 sm:justify-end">
+        <div className="text-right text-xs font-semibold text-muted-foreground">
+          <span>{graphStats?.entity_count ?? 0} entities</span>
+          <span className="mx-2 text-border">/</span>
+          <span>{graphStats?.relationship_count ?? 0} relationships</span>
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={!canDelete}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-destructive/40 bg-destructive/10 text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Delete current indexed graph"
+          title="Delete current indexed graph"
+        >
+          {isDeleting ? (
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
+        </button>
+      </div>
+    </section>
   );
 }
 
