@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  --background: 210 33% 98%;
+  --foreground: 218 23% 14%;
+  --card: 0 0% 100%;
+  --card-foreground: 218 23% 14%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 218 23% 14%;
+  --primary: 188 84% 32%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 162 57% 38%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 204 23% 92%;
+  --muted-foreground: 215 16% 38%;
+  --accent: 38 92% 50%;
+  --accent-foreground: 32 95% 12%;
+  --destructive: 0 68% 43%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 210 18% 84%;
+  --input: 210 18% 82%;
+  --ring: 188 84% 32%;
+  --radius: 0.5rem;
+  --success: 151 63% 38%;
+  --success-foreground: 0 0% 100%;
+  --surface-glow: 188 84% 32%;
+  --graph-surface: 210 29% 96%;
+  --graph-grid: 188 30% 64%;
+  --graph-edge: 188 41% 43%;
+  --graph-edge-highlight: 38 92% 50%;
+  --graph-node-person: 188 76% 42%;
+  --graph-node-geo: 151 55% 43%;
+  --graph-node-organization: 199 73% 43%;
+  --graph-node-event: 38 86% 56%;
+  --graph-node-default: 210 19% 98%;
+  --graph-node-text: 218 23% 14%;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: 220 20% 7%;
+  --foreground: 210 28% 93%;
+  --card: 220 16% 11%;
+  --card-foreground: 210 28% 93%;
+  --popover: 220 16% 11%;
+  --popover-foreground: 210 28% 93%;
+  --primary: 188 92% 44%;
+  --primary-foreground: 210 40% 6%;
+  --secondary: 162 69% 45%;
+  --secondary-foreground: 210 40% 6%;
+  --muted: 218 14% 18%;
+  --muted-foreground: 214 13% 67%;
+  --accent: 38 92% 54%;
+  --accent-foreground: 32 95% 10%;
+  --destructive: 0 72% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 217 13% 23%;
+  --input: 217 13% 25%;
+  --ring: 188 92% 44%;
+  --success: 151 69% 44%;
+  --success-foreground: 210 40% 6%;
+  --surface-glow: 188 92% 44%;
+  --graph-surface: 220 19% 9%;
+  --graph-grid: 188 28% 32%;
+  --graph-edge: 188 62% 43%;
+  --graph-edge-highlight: 38 92% 54%;
+  --graph-node-person: 188 80% 46%;
+  --graph-node-geo: 151 62% 42%;
+  --graph-node-organization: 199 79% 48%;
+  --graph-node-event: 38 91% 54%;
+  --graph-node-default: 210 28% 88%;
+  --graph-node-text: 210 40% 8%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-feature-settings: "rlig" 1, "calt" 1;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* Custom scrollbars aligned with palette */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsla(var(--primary) / 0.45) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: hsla(var(--primary) / 0.38);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsla(var(--primary) / 0.68);
+}
+
+.glass-panel {
+  border-radius: 0.75rem;
+  border: 1px solid hsla(var(--border) / 0.7);
+  background: linear-gradient(
+    135deg,
+    hsla(var(--card) / 0.92) 0%,
+    hsla(var(--muted) / 0.56) 58%,
+    hsla(var(--surface-glow) / 0.1) 100%
+  );
+  box-shadow: 0 20px 45px rgb(0 0 0 / 0.18);
+  backdrop-filter: blur(10px);
+}

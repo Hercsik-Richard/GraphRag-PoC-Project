@@ -1,0 +1,255 @@
+/**
+ * Chat page - Conversations + chat with graph drawer pattern
+ */
+import { useMemo, useState, useCallback, useEffect } from "react";
+import { Map, Moon, Sun } from "lucide-react";
+import { ChatInterface, ConversationList } from "@/widgets/chat-interface";
+import { GraphVisualization } from "@/widgets/graph-visualization";
+import { NodeDetails } from "@/widgets/node-details";
+import { UploadButton } from "@/features/upload-document";
+import { useGraphData } from "@/entities/graph-node";
+import { cn } from "@/shared";
+
+export function ChatPage() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const savedTheme = window.localStorage.getItem("graphrag-theme");
+    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+
+    return window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
+  });
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    string | null
+  >(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [isGraphOpen, setIsGraphOpen] = useState(false);
+  const { mutate: refreshGraph } = useGraphData();
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    root.classList.toggle("light", theme === "light");
+    window.localStorage.setItem("graphrag-theme", theme);
+  }, [theme]);
+
+  const handleUploadComplete = () => {
+    refreshGraph();
+  };
+
+  const [
+    highlightedNodesFromRelationship,
+    setHighlightedNodesFromRelationship,
+  ] = useState<string[]>([]);
+
+  const handleEntityClick = useCallback((entityLabel: string) => {
+    // Graph nodes use entity names/titles as IDs, so use the label directly
+    setSelectedNodeId(entityLabel);
+    setHighlightedNodesFromRelationship([]);
+    setIsGraphOpen(true);
+  }, []);
+
+  const handleRelationshipClick = useCallback(
+    (source: string, target: string) => {
+      // Highlight both nodes in the relationship
+      setHighlightedNodesFromRelationship([source, target]);
+      setSelectedNodeId(source); // Focus on source node
+      setIsGraphOpen(true);
+    },
+    []
+  );
+
+  const handleNodeSelect = (nodeId: string | null) => {
+    setSelectedNodeId(nodeId);
+    setHighlightedNodesFromRelationship([]);
+  };
+
+  const highlightedNodes = useMemo(() => {
+    if (highlightedNodesFromRelationship.length > 0) {
+      return highlightedNodesFromRelationship;
+    }
+    return selectedNodeId ? [selectedNodeId] : [];
+  }, [selectedNodeId, highlightedNodesFromRelationship]);
+
+  return (
+    <div className="min-h-screen w-full bg-linear-to-br from-background via-muted/45 to-primary/10 text-foreground">
+      <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10">
+        <header className="flex flex-col gap-4 rounded-xl border border-border/70 bg-card/95 px-6 py-5 shadow-[0_18px_36px_rgba(0,0,0,0.16)] sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+              GraphRag
+            </p>
+            <h1 className="mt-2 text-2xl font-bold text-foreground sm:text-3xl">
+              Knowledge graph assistant
+            </h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                setTheme((current) => (current === "dark" ? "light" : "dark"))
+              }
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border/70 bg-background text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={
+                theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+              }
+              title={
+                theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+              }
+            >
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsGraphOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"
+            >
+              <Map className="h-4 w-4" />
+              Graph view
+            </button>
+            <UploadButton onUploadComplete={handleUploadComplete} />
+          </div>
+        </header>
+
+        <div className="flex flex-1 flex-col gap-6 lg:flex-row">
+          <aside className="lg:w-72">
+            <div className="h-full rounded-xl border border-border/70 bg-card/95 shadow-[0_14px_30px_rgba(0,0,0,0.14)]">
+              <ConversationList
+                selectedId={selectedConversationId}
+                onSelect={setSelectedConversationId}
+              />
+            </div>
+          </aside>
+
+          <main className="flex-1">
+            <div className="flex h-full flex-col rounded-xl border border-border/70 bg-card/95 shadow-[0_20px_42px_rgba(0,0,0,0.16)]">
+              <ChatInterface
+                conversationId={selectedConversationId}
+                onMessageSent={() => refreshGraph()}
+                onEntityClick={handleEntityClick}
+                onRelationshipClick={handleRelationshipClick}
+              />
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <GraphDrawer
+        open={isGraphOpen}
+        onClose={() => setIsGraphOpen(false)}
+        highlightedNodes={highlightedNodes}
+        onNodeSelect={handleNodeSelect}
+        selectedNodeId={selectedNodeId}
+        conversationId={selectedConversationId}
+        onEntityClick={handleEntityClick}
+        onRelationshipClick={handleRelationshipClick}
+        onMessageSent={() => refreshGraph()}
+      />
+    </div>
+  );
+}
+
+function GraphDrawer({
+  open,
+  onClose,
+  highlightedNodes,
+  onNodeSelect,
+  selectedNodeId,
+  conversationId,
+  onEntityClick,
+  onRelationshipClick,
+  onMessageSent,
+}: {
+  open: boolean;
+  onClose: () => void;
+  highlightedNodes: string[];
+  onNodeSelect: (nodeId: string | null) => void;
+  selectedNodeId: string | null;
+  conversationId: string | null;
+  onEntityClick: (entityId: string) => void;
+  onRelationshipClick: (source: string, target: string) => void;
+  onMessageSent: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "fixed inset-0 z-50 overflow-hidden transition-opacity duration-500",
+        open
+          ? "pointer-events-auto opacity-100"
+          : "pointer-events-none opacity-0"
+      )}
+    >
+      <div
+        className="absolute inset-0 bg-background/90 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div
+        className={cn(
+          "absolute inset-y-0 right-0 flex h-full w-full translate-x-full items-stretch gap-6 px-4 py-6 transition-transform duration-500 sm:px-6",
+          open ? "translate-x-0" : "translate-x-full"
+        )}
+        style={{ background: "transparent" }}
+      >
+        <div
+          className="flex basis-1/3 flex-col rounded-xl border border-border/70 shadow-[0_20px_44px_rgba(0,0,0,0.18)]"
+          style={{ background: "hsl(var(--card))" }}
+        >
+          <ChatInterface
+            conversationId={conversationId}
+            onEntityClick={onEntityClick}
+            onRelationshipClick={onRelationshipClick}
+            onMessageSent={onMessageSent}
+          />
+        </div>
+        <div
+          className="flex basis-2/3 flex-col rounded-xl border border-border/70 shadow-[0_28px_70px_rgba(0,0,0,0.22)]"
+          style={{ background: "hsl(var(--card))" }}
+        >
+          <div className="flex items-center justify-between border-b border-border/30 px-6 py-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                Knowledge graph
+              </p>
+              <h2 className="text-xl font-bold text-primary">Entity network</h2>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border/70 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground shadow-sm transition-colors hover:bg-muted/60"
+              style={{ background: "hsl(var(--card))" }}
+            >
+              Close
+            </button>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
+            {/* Graph area - takes remaining space */}
+            <div className="min-h-0 flex-1">
+              {/* Always render GraphVisualization to preserve React Flow state - use CSS to hide */}
+              <div className={open ? "h-full w-full" : "hidden"}>
+                <GraphVisualization
+                  onNodeSelect={onNodeSelect}
+                  highlightedNodes={highlightedNodes}
+                  isOpen={open}
+                />
+              </div>
+            </div>
+            {/* Node details panel - fixed height with scroll */}
+            <div
+              className="h-56 shrink-0 overflow-hidden rounded-xl border border-border/60 shadow-inner"
+              style={{ background: "hsl(var(--card))" }}
+            >
+              <NodeDetails
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={onNodeSelect}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
