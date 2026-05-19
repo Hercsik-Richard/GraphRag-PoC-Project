@@ -6,9 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
-SearchMode = Literal["auto", "local", "global", "drift"]
-ResolvedSearchMode = Literal["local", "global", "drift"]
+SearchMode = Literal["auto", "local", "global", "drift", "source"]
+ResolvedSearchMode = Literal["local", "global", "drift", "source"]
 
 
 class ConversationCreateSchema(BaseModel):

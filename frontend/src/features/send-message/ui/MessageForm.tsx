@@ -17,6 +17,7 @@ const SEARCH_MODES: Array<{ value: SearchMode; label: string }> = [
   { value: "local", label: "Local" },
   { value: "global", label: "Global" },
   { value: "drift", label: "DRIFT" },
+  { value: "source", label: "Source" },
 ];
 
 export function MessageForm({
@@ -45,7 +46,7 @@ export function MessageForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-      <div className="inline-grid w-fit grid-cols-4 rounded-lg border border-border/70 bg-muted/40 p-1">
+      <div className="inline-grid w-fit grid-cols-5 rounded-lg border border-border/70 bg-muted/40 p-1">
         {SEARCH_MODES.map((mode) => (
           <button
             key={mode.value}

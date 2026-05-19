@@ -8,14 +8,14 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
-  retrieved_entities?: RetrievedEntity[];
-  retrieved_relationships?: RetrievedRelationship[];
+  retrieved_entities?: RetrievedEntity[] | null;
+  retrieved_relationships?: RetrievedRelationship[] | null;
   search_mode_used?: ResolvedSearchMode | null;
   search_mode_reason?: string | null;
 }
 
-export type SearchMode = 'auto' | 'local' | 'global' | 'drift';
-export type ResolvedSearchMode = 'local' | 'global' | 'drift';
+export type SearchMode = 'auto' | 'local' | 'global' | 'drift' | 'source';
+export type ResolvedSearchMode = 'local' | 'global' | 'drift' | 'source';
 
 export interface RetrievedEntity {
   id: string;

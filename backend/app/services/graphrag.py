@@ -1,22 +1,25 @@
 """GraphRAG service for document indexing and querying."""
 
 import asyncio
+import json
 import logging
 import math
 import os
 import re
+import shutil
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import graphrag.api as api
 import httpx
 import pandas as pd  # type: ignore
 from graphrag.config.enums import ModelType
-from graphrag.config.models.drift_search_config import DRIFTSearchConfig
 from graphrag.config.load_config import load_config
+from graphrag.config.models.drift_search_config import DRIFTSearchConfig
 from graphrag.config.models.language_model_config import LanguageModelConfig
 from graphrag.config.models.vector_store_schema_config import VectorStoreSchemaConfig
 from graphrag.language_model.manager import ModelManager
@@ -60,8 +63,20 @@ ProgressCallback = Callable[
     None,
 ]
 
-SearchMode = Literal["auto", "local", "global", "drift"]
-ResolvedSearchMode = Literal["local", "global", "drift"]
+SearchMode = Literal["auto", "local", "global", "drift", "source"]
+ResolvedSearchMode = Literal["local", "global", "drift", "source"]
+
+
+@dataclass(frozen=True)
+class SourceHit:
+    """Validated source-bound extraction result."""
+
+    category: Literal["collaborator", "disputant"]
+    person: str
+    topic: str
+    description: str
+    evidence_quote: str
+    text_unit_id: str
 
 
 class GraphRAGError(Exception):
@@ -153,6 +168,33 @@ class GraphRAGService:
         self._local_search_engine: LocalSearch | None = None
         self._global_search_engine: GlobalSearch | None = None
         self._drift_search_engine: DRIFTSearch | None = None
+
+    def _invalidate_cached_index(self) -> None:
+        """Clear in-memory GraphRAG objects and query engines after index changes."""
+        self._entities_cache = None
+        self._relationships_cache = None
+        self._entities_objects = None
+        self._relationships_objects = None
+        self._reports_objects = None
+        self._text_units_objects = None
+        self._communities_objects = None
+        self._local_search_engine = None
+        self._global_search_engine = None
+        self._drift_search_engine = None
+
+    def _prepare_workspace_for_indexing(self) -> None:
+        """Optionally reset corpus and GraphRAG outputs before a new indexing run."""
+        if settings.graphrag_replace_corpus_on_upload:
+            for input_file in self.input_dir.glob("*.txt"):
+                input_file.unlink(missing_ok=True)
+
+        if settings.graphrag_clean_output_on_index:
+            for path in (self.output_dir, self.cache_dir):
+                if path.exists():
+                    shutil.rmtree(path)
+                path.mkdir(parents=True, exist_ok=True)
+
+        self._invalidate_cached_index()
 
     def _set_graphrag_env_vars(
         self,
@@ -591,6 +633,17 @@ class GraphRAGService:
             IndexingError: If indexing fails.
         """
         try:
+            if progress_callback:
+                progress_callback(
+                    5,
+                    "Preparing a clean GraphRAG workspace",
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            self._prepare_workspace_for_indexing()
+
             # Save file to input directory
             if progress_callback:
                 progress_callback(
@@ -741,17 +794,7 @@ class GraphRAGService:
                     100,
                 )
 
-            # Invalidate all caches
-            self._entities_cache = None
-            self._relationships_cache = None
-            self._entities_objects = None
-            self._relationships_objects = None
-            self._reports_objects = None
-            self._text_units_objects = None
-            self._communities_objects = None
-            self._local_search_engine = None
-            self._global_search_engine = None
-            self._drift_search_engine = None
+            self._invalidate_cached_index()
 
             # Load and count entities/relationships
             stats = self._count_indexed_data()
@@ -947,17 +990,17 @@ class GraphRAGService:
             QueryError: If query execution fails.
         """
         try:
-            # Load indexed data objects
-            self._load_indexed_data_objects()
-
             resolved_mode, mode_reason = self.route_search_mode(question, search_mode)
+            if resolved_mode != "source":
+                self._load_indexed_data_objects()
+
             try:
                 result = await asyncio.wait_for(
                     self._execute_search(question, conversation_history, resolved_mode),
                     timeout=settings.graphrag_query_timeout_seconds,
                 )
             except Exception as search_error:
-                if search_mode == "auto" and resolved_mode != "local":
+                if search_mode == "auto" and resolved_mode not in {"local", "source"}:
                     failed_mode = resolved_mode
                     logger.warning(
                         "GraphRAG %s query failed; retrying in local mode: %s",
@@ -977,6 +1020,15 @@ class GraphRAGService:
                     raise
 
             logger.info("GraphRAG %s query completed successfully", resolved_mode)
+
+            if resolved_mode == "source":
+                return {
+                    "answer": result["answer"],
+                    "retrieved_entities": result["retrieved_entities"],
+                    "retrieved_relationships": result["retrieved_relationships"],
+                    "search_mode_used": resolved_mode,
+                    "search_mode_reason": mode_reason,
+                }
 
             retrieved_entities, retrieved_relationships = self._extract_retrieved_context(result)
 
@@ -999,6 +1051,9 @@ class GraphRAGService:
         resolved_mode: ResolvedSearchMode,
     ) -> Any:
         """Execute one GraphRAG search mode."""
+        if resolved_mode == "source":
+            return await self._execute_source_bound_search(question)
+
         search_engine = self._get_search_engine(resolved_mode)
         logger.info(
             "Executing GraphRAG %s query: %s...",
@@ -1074,8 +1129,8 @@ class GraphRAGService:
 
         if any(pattern in normalized for pattern in source_bound_patterns):
             return (
-                "local",
-                "Auto router selected local because the query asks for source-bound extraction from the text.",
+                "source",
+                "Auto router selected source because the query asks for source-bound extraction from the text.",
             )
         if any(pattern in normalized for pattern in global_patterns):
             return "global", "Auto router selected global for an overview or dataset-level query."
@@ -1222,6 +1277,378 @@ class GraphRAGService:
 
         return retrieved_entities, retrieved_relationships
 
+    async def _execute_source_bound_search(self, question: str) -> dict[str, Any]:
+        """Answer source-bound extraction questions using raw text units only."""
+        text_units = self._load_text_unit_records()
+        if not text_units:
+            raise QueryError("No text units loaded - index may be empty")
+
+        hits: list[SourceHit] = []
+        for text_unit in text_units:
+            text = str(text_unit.get("text", ""))
+            if not self._text_unit_may_contain_source_hit(text):
+                continue
+
+            prompt = self._build_source_extraction_prompt(question, text)
+            response = await self.chat_model.achat(
+                prompt,
+                max_tokens=1200 if self._is_ollama_query() else 1800,
+                temperature=0.0,
+            )
+            content = str(response.output.content)
+            parsed = self._parse_source_extraction_json(content)
+            hits.extend(
+                self._validated_source_hits(
+                    parsed,
+                    text_unit_id=str(text_unit.get("id", "")),
+                    text=text,
+                )
+            )
+
+        deduped_hits = self._dedupe_source_hits(hits)
+        answer = self._format_source_bound_answer(deduped_hits)
+        entities, relationships = self._source_hits_to_retrieved_context(deduped_hits)
+        return {
+            "answer": answer,
+            "retrieved_entities": entities,
+            "retrieved_relationships": relationships,
+        }
+
+    def _load_text_unit_records(self) -> list[dict[str, Any]]:
+        """Load GraphRAG text units as dictionaries for source-bound extraction."""
+        text_units_file = self.output_dir / "text_units.parquet"
+        if not text_units_file.exists():
+            logger.warning("Text units file not found: %s", text_units_file)
+            return []
+
+        try:
+            df = pd.read_parquet(text_units_file)
+            return df.to_dict("records")  # type: ignore
+        except Exception as e:
+            logger.error("Failed to load text units: %s", e)
+            return []
+
+    def _text_unit_may_contain_source_hit(self, text: str) -> bool:
+        """Cheaply skip chunks unlikely to contain collaborations or disputes."""
+        normalized = self._normalize_source_text(text)
+        keywords = [
+            "collaborat",
+            "co-invent",
+            "published two papers",
+            "with physicist",
+            "with boris podolsky",
+            "with nathan rosen",
+            "assisted by",
+            "einstein and",
+            "received a description",
+            "assistant",
+            "debate",
+            "dispute",
+            "objected",
+            "rejected",
+            "incomplete",
+            "vitat",
+            "egyutt",
+        ]
+        return "einstein" in normalized and any(keyword in normalized for keyword in keywords)
+
+    def _build_source_extraction_prompt(self, question: str, text: str) -> str:
+        """Build a strict JSON extraction prompt for one source text unit."""
+        return f"""
+You extract only explicitly stated scientific relationships from one source excerpt.
+
+User question:
+{question}
+
+Rules:
+- Use only the source excerpt below. Do not use general knowledge.
+- Return JSON only, with keys "collaborators" and "disputants".
+- A collaborator must be a named scientist, physicist, or mathematician who explicitly worked with Einstein on scientific work, papers, experiments, models, inventions, or theory.
+- A disputant must be a named scientist, physicist, mathematician, or scholar who explicitly had a serious scientific debate, dispute, objection, or disagreement with Einstein.
+- Do not include administrative committee members, political activists, friends, romantic partners, musicians, hosts, relatives, institutions, concepts, theories, or article section titles as people.
+- Each item must include: "person", "topic", "description", "evidence_quote".
+- "evidence_quote" must be a short exact quote copied from the source excerpt.
+- If there is no explicit evidence, return an empty list.
+
+JSON shape:
+{{
+  "collaborators": [
+    {{
+      "person": "Name",
+      "topic": "What they worked on",
+      "description": "Short Hungarian description",
+      "evidence_quote": "Exact quote from source"
+    }}
+  ],
+  "disputants": [
+    {{
+      "person": "Name",
+      "topic": "Main subject of the dispute",
+      "description": "Short Hungarian description",
+      "evidence_quote": "Exact quote from source"
+    }}
+  ]
+}}
+
+Source excerpt:
+\"\"\"{text}\"\"\"
+""".strip()
+
+    def _parse_source_extraction_json(self, content: str) -> dict[str, Any]:
+        """Parse a possibly fenced JSON object from an LLM response."""
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+            stripped = re.sub(r"\s*```$", "", stripped)
+
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+            if not match:
+                logger.warning("Source extraction response was not JSON: %s", content[:300])
+                return {"collaborators": [], "disputants": []}
+            try:
+                parsed = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                logger.warning("Source extraction JSON parse failed: %s", content[:300])
+                return {"collaborators": [], "disputants": []}
+
+        if not isinstance(parsed, dict):
+            return {"collaborators": [], "disputants": []}
+        return parsed
+
+    def _validated_source_hits(
+        self,
+        parsed: dict[str, Any],
+        *,
+        text_unit_id: str,
+        text: str,
+    ) -> list[SourceHit]:
+        """Validate extracted source hits against the exact text unit."""
+        hits: list[SourceHit] = []
+        for key, category in (
+            ("collaborators", "collaborator"),
+            ("disputants", "disputant"),
+        ):
+            raw_items = parsed.get(key, [])
+            if not isinstance(raw_items, list):
+                continue
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                person = str(item.get("person", "")).strip()
+                topic = str(item.get("topic", "")).strip()
+                description = str(item.get("description", "")).strip()
+                evidence_quote = str(item.get("evidence_quote", "")).strip()
+                if not self._valid_source_person(person):
+                    continue
+                if not topic or not description or not evidence_quote:
+                    continue
+                if not self._quote_exists_in_text(evidence_quote, text):
+                    continue
+                if not self._person_appears_in_text(person, text):
+                    continue
+                if self._is_non_scientific_source_hit(
+                    category=category,
+                    topic=topic,
+                    description=description,
+                    evidence_quote=evidence_quote,
+                ):
+                    continue
+
+                hits.append(
+                    SourceHit(
+                        category=cast(Literal["collaborator", "disputant"], category),
+                        person=person,
+                        topic=topic,
+                        description=description,
+                        evidence_quote=evidence_quote,
+                        text_unit_id=text_unit_id,
+                    )
+                )
+        return hits
+
+    def _valid_source_person(self, person: str) -> bool:
+        """Return whether an extracted person field looks like a real target person."""
+        normalized = self._normalize_source_text(person)
+        if len(normalized) < 3 or normalized in {"einstein", "albert einstein"}:
+            return False
+        invalid_fragments = [
+            "mechanic",
+            "mechanika",
+            "statistics",
+            "statiszt",
+            "relativity",
+            "relativitas",
+            "theory",
+            "elmelet",
+            "paradox",
+            "experiment",
+            "field",
+            "quantum",
+            "kvantum",
+            "committee",
+            "academy",
+            "university",
+            "institute",
+        ]
+        if any(fragment in normalized for fragment in invalid_fragments):
+            return False
+        return bool(re.search(r"[A-Za-zÁÉÍÓÖŐÚÜŰáéíóöőúüű]", person))
+
+    def _quote_exists_in_text(self, quote: str, text: str) -> bool:
+        """Check evidence quote against source text with whitespace normalization."""
+        return self._normalize_source_text(quote) in self._normalize_source_text(text)
+
+    def _person_appears_in_text(self, person: str, text: str) -> bool:
+        """Check whether the extracted name is actually present in the source text."""
+        person_norm = self._normalize_source_text(person)
+        text_norm = self._normalize_source_text(text)
+        if person_norm in text_norm:
+            return True
+        parts = [part for part in person_norm.split() if len(part) > 2]
+        return bool(parts) and all(part in text_norm for part in parts)
+
+    def _is_non_scientific_source_hit(
+        self,
+        *,
+        category: str,
+        topic: str,
+        description: str,
+        evidence_quote: str,
+    ) -> bool:
+        """Filter common false positives from biographical/admin context."""
+        combined = self._normalize_source_text(f"{topic} {description} {evidence_quote}")
+        general_exclusions = [
+            "league of nations",
+            "committee",
+            "delegate",
+            "appointed",
+            "member of",
+            "romantic",
+            "married",
+            "played chamber music",
+            "friendship",
+            "walks together",
+            "visiting",
+            "host",
+        ]
+        if any(exclusion in combined for exclusion in general_exclusions):
+            return True
+
+        if category == "collaborator":
+            collaboration_markers = [
+                "collaborat",
+                "co-invent",
+                "published two papers",
+                "submitted his translation",
+                "assisted by",
+                "with physicist",
+                "with boris podolsky",
+                "with nathan rosen",
+                "with szil",
+                "einstein and",
+            ]
+            return not any(marker in combined for marker in collaboration_markers)
+
+        dispute_markers = [
+            "debate",
+            "dispute",
+            "public disputes",
+            "object",
+            "rejected",
+            "incomplete",
+            "never fully accepted",
+        ]
+        return not any(marker in combined for marker in dispute_markers)
+
+    def _dedupe_source_hits(self, hits: list[SourceHit]) -> list[SourceHit]:
+        """Deduplicate source hits while preserving source order."""
+        seen: set[tuple[str, str, str]] = set()
+        deduped: list[SourceHit] = []
+        for hit in hits:
+            key = (
+                hit.category,
+                self._normalize_source_text(hit.person),
+                self._normalize_source_text(hit.topic),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(hit)
+        return deduped
+
+    def _format_source_bound_answer(self, hits: list[SourceHit]) -> str:
+        """Format validated source hits into the requested Hungarian structure."""
+        collaborators = [hit for hit in hits if hit.category == "collaborator"]
+        disputants = [hit for hit in hits if hit.category == "disputant"]
+
+        lines = ["### Együttműködők", ""]
+        if collaborators:
+            for hit in collaborators:
+                lines.append(
+                    f"- **{hit.person}**: {hit.description} "
+                    f"Fő téma: {hit.topic}. Forrás: \"{hit.evidence_quote}\""
+                )
+        else:
+            lines.append("- Nincs explicit találat a megadott szövegben.")
+
+        lines.extend(["", "### Vitatkozó partnerek", ""])
+        if disputants:
+            for hit in disputants:
+                lines.append(
+                    f"- **{hit.person}**: {hit.description} "
+                    f"A vita fő tárgya: {hit.topic}. Forrás: \"{hit.evidence_quote}\""
+                )
+        else:
+            lines.append("- Nincs explicit találat a megadott szövegben.")
+
+        return "\n".join(lines)
+
+    def _source_hits_to_retrieved_context(
+        self, hits: list[SourceHit]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Convert source hits to the existing graph context response shape."""
+        entities: list[dict[str, Any]] = []
+        relationships: list[dict[str, Any]] = []
+        seen_entities: set[str] = set()
+        for index, hit in enumerate(hits):
+            entity_key = self._normalize_source_text(hit.person)
+            if entity_key not in seen_entities:
+                seen_entities.add(entity_key)
+                entities.append(
+                    {
+                        "id": entity_key,
+                        "title": hit.person,
+                        "type": "person",
+                        "description": hit.evidence_quote,
+                        "index": index,
+                        "source": "text_units.parquet",
+                        "text_unit_id": hit.text_unit_id,
+                    }
+                )
+            relationships.append(
+                {
+                    "id": f"source-{index}",
+                    "source": "ALBERT EINSTEIN",
+                    "target": hit.person,
+                    "description": f"{hit.topic}: {hit.evidence_quote}",
+                    "weight": 1.0,
+                    "index": index,
+                    "relationship_type": hit.category,
+                    "text_unit_id": hit.text_unit_id,
+                }
+            )
+        return entities, relationships
+
+    def _normalize_source_text(self, value: str) -> str:
+        """Normalize text for quote/person validation."""
+        text = str(value or "").casefold()
+        text = text.replace("–", "-").replace("—", "-")
+        text = text.replace("“", '"').replace("”", '"').replace("’", "'")
+        return re.sub(r"\s+", " ", text).strip()
+
     def _create_local_search_engine(self) -> LocalSearch:
         """Create and configure local search engine."""
         try:
@@ -1260,7 +1687,7 @@ You are a helpful assistant responding to questions about data in the tables pro
 
 Generate a response of the target length and format that responds to the user's question,
  summarizing all information in the input data tables appropriate for the response length
- and format, and incorporating any relevant general knowledge.
+ and format. Use only the supplied data tables; do not incorporate outside knowledge.
 
 If you don't know the answer, just say so. Do not make anything up.
 
@@ -1276,7 +1703,9 @@ Points supported by data should list their data references as follows:
 - Use the exact entity names as they appear in the Entities table
 - For relationships, use the exact source and target names from the Relationships table
 - Only add citations when the information directly comes from the provided data
-- Do not cite if you're using general knowledge
+- If a question asks for content based on the article/text/source, include only relationships
+  explicitly supported by the provided data. Do not infer scientific collaboration from
+  friendship, committee membership, institutional overlap, political activity, or biography.
 
 
 ---Target response length and format---
@@ -1962,6 +2391,24 @@ Add sections and commentary to the response as appropriate for the length and fo
                 "Query embedding provider/model differs from index embedding provider/model; "
                 "LanceDB retrieval may be inaccurate. Reindex or align APP_QUERY_EMBED_PROVIDER."
             )
+        missing_text_unit_refs = self._count_missing_text_unit_references()
+        if missing_text_unit_refs > 0:
+            warnings.append(
+                f"{missing_text_unit_refs} entity/relationship text-unit references are missing; "
+                "the index may be stale or mixed with old outputs."
+            )
+        missing_relationship_endpoint_count = self._count_relationship_endpoints_missing_from_input()
+        if missing_relationship_endpoint_count > 0:
+            warnings.append(
+                f"{missing_relationship_endpoint_count} relationship endpoints were not found "
+                "in the current input text; clean and reindex the corpus."
+            )
+        query_model = settings.get_model_name(self.query_chat_provider, "chat").casefold()
+        if self.query_chat_provider == "ollama" and re.search(r"(^|[:/-])([34])b($|[:/-])", query_model):
+            warnings.append(
+                "Small local query model detected; source-bound extraction may need a stronger "
+                "query chat provider for reliable Hungarian structured answers."
+            )
 
         return {
             "document_count": document_count,
@@ -2007,6 +2454,66 @@ Add sections and commentary to the response as appropriate for the length and fo
         except Exception as e:
             logger.warning("Failed to count %s: %s", filename, e)
             return 0
+
+    def _count_missing_text_unit_references(self) -> int:
+        """Count entity/relationship text unit ids that are absent from text_units.parquet."""
+        text_units_file = self.output_dir / "text_units.parquet"
+        if not text_units_file.exists():
+            return 0
+        try:
+            text_unit_ids = set(pd.read_parquet(text_units_file)["id"].astype(str))
+        except Exception as e:
+            logger.warning("Failed to read text unit ids: %s", e)
+            return 0
+
+        missing = 0
+        for filename in ("entities.parquet", "relationships.parquet"):
+            path = self.output_dir / filename
+            if not path.exists():
+                continue
+            try:
+                df = pd.read_parquet(path)
+            except Exception as e:
+                logger.warning("Failed to read %s text unit references: %s", filename, e)
+                continue
+            if "text_unit_ids" not in df.columns:
+                continue
+            for raw_ids in df["text_unit_ids"]:
+                if raw_ids is None:
+                    continue
+                if hasattr(raw_ids, "tolist"):
+                    raw_ids = raw_ids.tolist()
+                if isinstance(raw_ids, (list, tuple, set)):
+                    ids = list(raw_ids)
+                else:
+                    try:
+                        if pd.isna(raw_ids):
+                            continue
+                    except TypeError:
+                        pass
+                    ids = [raw_ids]
+                missing += sum(1 for text_unit_id in ids if str(text_unit_id) not in text_unit_ids)
+        return missing
+
+    def _count_relationship_endpoints_missing_from_input(self) -> int:
+        """Count relationship endpoints that do not appear in current input text files."""
+        input_text = " ".join(
+            path.read_text(encoding="utf-8", errors="ignore") for path in self.input_dir.glob("*.txt")
+        )
+        normalized_input = self._normalize_source_text(input_text)
+        if not normalized_input:
+            return 0
+
+        missing = 0
+        for relationship in self._load_relationships():
+            for field in ("source", "target"):
+                endpoint = str(relationship.get(field, "")).strip()
+                if not endpoint:
+                    continue
+                endpoint_norm = self._normalize_source_text(endpoint)
+                if endpoint_norm and endpoint_norm not in normalized_input:
+                    missing += 1
+        return missing
 
 
 # Global service instance

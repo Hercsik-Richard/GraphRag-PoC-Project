@@ -6,7 +6,6 @@ from typing import Any, Literal, cast
 from pydantic import PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 ModelProvider = Literal["ollama", "gemini", "openrouter"]
 
 
@@ -52,6 +51,8 @@ class Settings(BaseSettings):
     graphrag_chunk_size: int = 1000
     graphrag_chunk_overlap: int = 150
     graphrag_claim_extraction_enabled: bool = False
+    graphrag_clean_output_on_index: bool = True
+    graphrag_replace_corpus_on_upload: bool = True
 
     graphrag_root: str
     cors_origins: list[str]

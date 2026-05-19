@@ -7,19 +7,22 @@ import type {
 } from "@/entities/message";
 
 interface MessageCitationsProps {
-  entities?: RetrievedEntity[];
-  relationships?: RetrievedRelationship[];
+  entities?: RetrievedEntity[] | null;
+  relationships?: RetrievedRelationship[] | null;
   onEntityClick?: (entityId: string) => void;
   onRelationshipClick?: (source: string, target: string) => void;
 }
 
 export function MessageCitations({
-  entities = [],
-  relationships = [],
+  entities,
+  relationships,
   onEntityClick,
   onRelationshipClick,
 }: MessageCitationsProps) {
-  if (entities.length === 0 && relationships.length === 0) {
+  const safeEntities = entities ?? [];
+  const safeRelationships = relationships ?? [];
+
+  if (safeEntities.length === 0 && safeRelationships.length === 0) {
     return null;
   }
 
@@ -31,7 +34,7 @@ export function MessageCitations({
 
       <div className="flex flex-wrap gap-1.5">
         {/* Entities */}
-        {entities.map((entity, idx) => {
+        {safeEntities.map((entity, idx) => {
           const identifier = entity.title ?? entity.id;
           const displayIndex = entity.index !== undefined ? entity.index : idx;
           const tooltipText = [
@@ -60,7 +63,7 @@ export function MessageCitations({
         })}
 
         {/* Relationships */}
-        {relationships.map((rel, idx) => {
+        {safeRelationships.map((rel, idx) => {
           const displayIndex = rel.index !== undefined ? rel.index : idx;
           const tooltipText = [
             `${rel.source} → ${rel.target}`,

@@ -125,10 +125,13 @@ function formatMessageForCopy(message: Message) {
 }
 
 function formatSources(
-  entities: RetrievedEntity[] = [],
-  relationships: RetrievedRelationship[] = []
+  entities: RetrievedEntity[] | null | undefined = [],
+  relationships: RetrievedRelationship[] | null | undefined = []
 ) {
-  const entityLines = entities.map((entity, idx) => {
+  const safeEntities = entities ?? [];
+  const safeRelationships = relationships ?? [];
+
+  const entityLines = safeEntities.map((entity, idx) => {
     const displayIndex = entity.index !== undefined ? entity.index : idx;
     const details = [
       entity.type && `type: ${entity.type}`,
@@ -140,7 +143,7 @@ function formatSources(
     }`;
   });
 
-  const relationshipLines = relationships.map((rel, idx) => {
+  const relationshipLines = safeRelationships.map((rel, idx) => {
     const displayIndex = rel.index !== undefined ? rel.index : idx;
     const details = [
       rel.description,

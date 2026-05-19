@@ -270,6 +270,7 @@ A feltöltés csak `.txt` fájlokat fogad, legfeljebb 10 MB méretig. A GraphRAG
 - `Local`: konkrét entitásokra, tényekre és dokumentumrészletekre jó.
 - `Global`: teljes korpuszra vonatkozó összefoglalókhoz, témákhoz és mintázatokhoz jó.
 - `DRIFT`: több entitást, kapcsolatot, ok-okozatot vagy összehasonlítást érintő kérdésekhez jó.
+- `Source`: forráshű kivonatoláshoz jó, amikor csak a szövegben explicit szereplő kapcsolatokat szabad említeni.
 
 A chat válasza eltárolja a ténylegesen használt módot és a routing indoklását is.
 

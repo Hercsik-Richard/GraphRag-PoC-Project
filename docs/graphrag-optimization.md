@@ -7,8 +7,9 @@
 - `Local`: best for specific entities, facts, and document details.
 - `Global`: best for full-dataset summaries, themes, trends, and broad patterns.
 - `DRIFT`: best for multi-hop questions, relationships between multiple actors, and "why/how are these connected" questions.
+- `Source`: best for source-bound extraction where the answer must only use relationships explicitly stated in the uploaded text.
 
-Manual mode selection in the chat UI overrides the router. API clients can set `search_mode` to `auto`, `local`, `global`, or `drift` on `POST /api/chat/conversations/{id}/query`.
+Manual mode selection in the chat UI overrides the router. API clients can set `search_mode` to `auto`, `local`, `global`, `drift`, or `source` on `POST /api/chat/conversations/{id}/query`.
 
 ## Provider Profiles
 

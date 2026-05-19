@@ -11,8 +11,8 @@ from app.schemas.chat import (
 )
 from app.schemas.graph import (
     EdgeDataSchema,
-    GraphDiagnosticsSchema,
     GraphDataSchema,
+    GraphDiagnosticsSchema,
     GraphEdgeSchema,
     GraphNodeSchema,
     GraphStatsSchema,

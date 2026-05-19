@@ -250,6 +250,15 @@ async def upload_document(
             message="Document queued for indexing",
         )
 
+        if settings.graphrag_replace_corpus_on_upload:
+            await db.execute(
+                text("""
+                    UPDATE indexed_documents
+                    SET status = 'superseded'
+                    WHERE status IN ('processing', 'completed')
+                """)
+            )
+
         query = text("""
             INSERT INTO indexed_documents (
                 id, filename, status, entity_count, relationship_count
