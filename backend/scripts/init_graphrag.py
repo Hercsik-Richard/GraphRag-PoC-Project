@@ -12,17 +12,17 @@ from app.config import settings  # type: ignore
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SETTINGS_YAML_CONTENT = """# GraphRAG Configuration for Mythology Project
+SETTINGS_YAML_CONTENT = """# GraphRAG Configuration
 
 encoding_model: cl100k_base
 
 models:
   default_chat_model:
     type: chat
-    model_provider: ${GRAPHRAG_MODEL_PROVIDER}
-    model: ${GRAPHRAG_LLM_MODEL}
-    api_base: ${GRAPHRAG_API_BASE}
-    api_key: ${GRAPHRAG_API_KEY}
+    model_provider: ${GRAPHRAG_CHAT_MODEL_PROVIDER}
+    model: ${GRAPHRAG_CHAT_MODEL}
+    api_base: ${GRAPHRAG_CHAT_API_BASE}
+    api_key: ${GRAPHRAG_CHAT_API_KEY}
     encoding_model: cl100k_base
     max_tokens: 4000
     temperature: 0
@@ -33,10 +33,10 @@ models:
     concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}
   default_embedding_model:
     type: embedding
-    model_provider: ${GRAPHRAG_MODEL_PROVIDER}
+    model_provider: ${GRAPHRAG_EMBED_MODEL_PROVIDER}
     model: ${GRAPHRAG_EMBEDDING_MODEL}
-    api_base: ${GRAPHRAG_API_BASE}
-    api_key: ${GRAPHRAG_API_KEY}
+    api_base: ${GRAPHRAG_EMBED_API_BASE}
+    api_key: ${GRAPHRAG_EMBED_API_KEY}
     encoding_model: cl100k_base
     max_tokens: 8191
     request_timeout: ${GRAPHRAG_REQUEST_TIMEOUT}
@@ -69,8 +69,8 @@ reporting:
   base_dir: "output"
 
 entity_extraction:
-  entity_types: [person, place, event, concept, artifact]
-  max_gleanings: 1
+  entity_types: [person, organization, geo, event, concept, artifact, work, technology]
+  max_gleanings: 2
 
 summarize_descriptions:
   max_length: 500
@@ -80,11 +80,11 @@ claim_extraction:
   max_gleanings: 1
 
 community_reports:
-  max_length: 1500
-  max_input_length: 8000
+  max_length: 2000
+  max_input_length: 12000
 
 cluster_graph:
-  max_cluster_size: 10
+  max_cluster_size: 20
 
 embed_graph:
   enabled: true
@@ -124,8 +124,13 @@ def create_graphrag_workspace() -> None:
     settings_file = graphrag_root / "settings.yaml"
 
     # Prepare environment variables for GraphRAG based on index provider
-    index_provider = settings.get_index_provider()
-    logger.info(f"Configuring GraphRAG for index provider: {index_provider}")
+    index_chat_provider = settings.get_index_chat_provider()
+    index_embed_provider = settings.get_index_embed_provider()
+    logger.info(
+        "Configuring GraphRAG for index chat provider %s and embedding provider %s",
+        index_chat_provider,
+        index_embed_provider,
+    )
 
     os.environ["GRAPHRAG_CHUNK_SIZE"] = str(settings.graphrag_chunk_size)
     os.environ["GRAPHRAG_CHUNK_OVERLAP"] = str(settings.graphrag_chunk_overlap)
@@ -134,28 +139,45 @@ def create_graphrag_workspace() -> None:
         settings.graphrag_claim_extraction_enabled
     ).lower()
 
-    if index_provider == "ollama":
-        os.environ["GRAPHRAG_API_KEY"] = "ollama"  # Dummy key for Ollama
-        os.environ["GRAPHRAG_LLM_MODEL"] = settings.ollama_llm_model
-        os.environ["GRAPHRAG_EMBEDDING_MODEL"] = settings.ollama_embed_model
-        os.environ["GRAPHRAG_API_BASE"] = settings.ollama_base_url or ""
-        os.environ["GRAPHRAG_MODEL_PROVIDER"] = "ollama"
-        os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(
-            settings.graphrag_concurrent_requests
-        )
-        os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
-        os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
-    elif index_provider == "gemini":
-        os.environ["GRAPHRAG_API_KEY"] = settings.gemini_api_key or ""
-        os.environ["GRAPHRAG_LLM_MODEL"] = settings.gemini_llm_model
-        os.environ["GRAPHRAG_EMBEDDING_MODEL"] = settings.gemini_embed_model
-        os.environ["GRAPHRAG_API_BASE"] = ""  # Empty for Gemini (uses default)
-        os.environ["GRAPHRAG_MODEL_PROVIDER"] = "gemini"
-        os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(
-            settings.graphrag_concurrent_requests
-        )
-        os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
-        os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
+    os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(settings.graphrag_concurrent_requests)
+    os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
+    os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
+
+    def provider_env(provider: str, kind: str) -> dict[str, str]:
+        if provider == "ollama":
+            return {
+                "api_key": "ollama",
+                "model": settings.ollama_llm_model
+                if kind == "chat"
+                else settings.ollama_embed_model,
+                "api_base": settings.ollama_base_url or "",
+            }
+        if provider == "gemini":
+            return {
+                "api_key": settings.gemini_api_key or "",
+                "model": settings.gemini_llm_model
+                if kind == "chat"
+                else settings.gemini_embed_model,
+                "api_base": "",
+            }
+        return {
+            "api_key": settings.openrouter_api_key or "",
+            "model": settings.openrouter_llm_model
+            if kind == "chat"
+            else settings.openrouter_embed_model,
+            "api_base": settings.openrouter_api_base,
+        }
+
+    chat_config = provider_env(index_chat_provider, "chat")
+    embed_config = provider_env(index_embed_provider, "embedding")
+    os.environ["GRAPHRAG_CHAT_MODEL_PROVIDER"] = index_chat_provider
+    os.environ["GRAPHRAG_CHAT_MODEL"] = chat_config["model"]
+    os.environ["GRAPHRAG_CHAT_API_BASE"] = chat_config["api_base"]
+    os.environ["GRAPHRAG_CHAT_API_KEY"] = chat_config["api_key"]
+    os.environ["GRAPHRAG_EMBED_MODEL_PROVIDER"] = index_embed_provider
+    os.environ["GRAPHRAG_EMBEDDING_MODEL"] = embed_config["model"]
+    os.environ["GRAPHRAG_EMBED_API_BASE"] = embed_config["api_base"]
+    os.environ["GRAPHRAG_EMBED_API_KEY"] = embed_config["api_key"]
 
     settings_file.write_text(SETTINGS_YAML_CONTENT)
     logger.info(f"Created GraphRAG configuration: {settings_file}")

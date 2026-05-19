@@ -15,6 +15,7 @@ import graphrag.api as api
 import httpx
 import pandas as pd  # type: ignore
 from graphrag.config.enums import ModelType
+from graphrag.config.models.drift_search_config import DRIFTSearchConfig
 from graphrag.config.load_config import load_config
 from graphrag.config.models.language_model_config import LanguageModelConfig
 from graphrag.config.models.vector_store_schema_config import VectorStoreSchemaConfig
@@ -24,11 +25,21 @@ from graphrag.query.context_builder.conversation_history import (
 )
 from graphrag.query.context_builder.entity_extraction import EntityVectorStoreKey
 from graphrag.query.indexer_adapters import (
+    read_indexer_communities,
     read_indexer_entities,
     read_indexer_relationships,
+    read_indexer_report_embeddings,
     read_indexer_reports,
     read_indexer_text_units,
 )
+from graphrag.query.structured_search.drift_search.drift_context import (
+    DRIFTSearchContextBuilder,
+)
+from graphrag.query.structured_search.drift_search.search import DRIFTSearch
+from graphrag.query.structured_search.global_search.community_context import (
+    GlobalCommunityContext,
+)
+from graphrag.query.structured_search.global_search.search import GlobalSearch
 from graphrag.query.structured_search.local_search.mixed_context import (
     LocalSearchMixedContext,
 )
@@ -36,7 +47,7 @@ from graphrag.query.structured_search.local_search.search import LocalSearch
 from graphrag.tokenizer.get_tokenizer import get_tokenizer
 from graphrag.vector_stores.lancedb import LanceDBVectorStore
 
-from app.config import settings
+from app.config import ModelProvider, settings
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +60,8 @@ ProgressCallback = Callable[
     None,
 ]
 
-# Type alias for model provider
-ModelProvider = Literal["ollama", "gemini"]
+SearchMode = Literal["auto", "local", "global", "drift"]
+ResolvedSearchMode = Literal["local", "global", "drift"]
 
 
 class GraphRAGError(Exception):
@@ -67,6 +78,12 @@ class OllamaConnectionError(GraphRAGError):
 
 class GeminiConfigurationError(GraphRAGError):
     """Exception raised when Gemini configuration is invalid."""
+
+    pass
+
+
+class OpenRouterConfigurationError(GraphRAGError):
+    """Exception raised when OpenRouter configuration is invalid."""
 
     pass
 
@@ -95,18 +112,28 @@ class GraphRAGService:
         self.lancedb_uri = f"{self.graphrag_root}/output/lancedb"
 
         # Store provider configuration with explicit typing
-        self.index_provider: ModelProvider = settings.get_index_provider()
-        self.query_provider: ModelProvider = settings.get_query_provider()
+        self.index_chat_provider: ModelProvider = settings.get_index_chat_provider()
+        self.index_embed_provider: ModelProvider = settings.get_index_embed_provider()
+        self.query_chat_provider: ModelProvider = settings.get_query_chat_provider()
+        self.query_embed_provider: ModelProvider = settings.get_query_embed_provider()
+        self.index_provider: ModelProvider = self.index_chat_provider
+        self.query_provider: ModelProvider = self.query_chat_provider
 
-        logger.info(f"Model providers - Index: {self.index_provider}, Query: {self.query_provider}")
+        logger.info(
+            "Model providers - index chat: %s, index embed: %s, query chat: %s, query embed: %s",
+            self.index_chat_provider,
+            self.index_embed_provider,
+            self.query_chat_provider,
+            self.query_embed_provider,
+        )
 
         # Ensure directories exist
         self.input_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Set environment variables for GraphRAG indexing based on index provider
-        self._set_graphrag_env_vars(self.index_provider)
+        # Set environment variables for GraphRAG indexing based on index providers
+        self._set_graphrag_env_vars(self.index_chat_provider, self.index_embed_provider)
 
         # Load GraphRAG configuration
         self.config = load_config(self.graphrag_root)
@@ -121,15 +148,23 @@ class GraphRAGService:
         self._relationships_objects: list[Any] | None = None
         self._reports_objects: list[Any] | None = None
         self._text_units_objects: list[Any] | None = None
+        self._communities_objects: list[Any] | None = None
         self._last_load_time: datetime | None = None
-        self._search_engine: LocalSearch | None = None
+        self._local_search_engine: LocalSearch | None = None
+        self._global_search_engine: GlobalSearch | None = None
+        self._drift_search_engine: DRIFTSearch | None = None
 
-    def _set_graphrag_env_vars(self, provider: ModelProvider) -> None:
+    def _set_graphrag_env_vars(
+        self,
+        chat_provider: ModelProvider,
+        embed_provider: ModelProvider,
+    ) -> None:
         """
-        Set environment variables for GraphRAG based on provider.
+        Set environment variables for GraphRAG indexing based on provider selection.
 
         Args:
-            provider: The model provider to configure for.
+            chat_provider: The chat model provider to configure for.
+            embed_provider: The embedding model provider to configure for.
         """
         os.environ["GRAPHRAG_CHUNK_SIZE"] = str(settings.graphrag_chunk_size)
         os.environ["GRAPHRAG_CHUNK_OVERLAP"] = str(settings.graphrag_chunk_overlap)
@@ -137,31 +172,63 @@ class GraphRAGService:
         os.environ["GRAPHRAG_CLAIM_EXTRACTION_ENABLED"] = str(
             settings.graphrag_claim_extraction_enabled
         ).lower()
+        os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(settings.graphrag_concurrent_requests)
+        os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
+        os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
 
+        chat_config = self._provider_env_config(chat_provider, ModelType.Chat)
+        embed_config = self._provider_env_config(embed_provider, ModelType.Embedding)
+
+        os.environ["GRAPHRAG_CHAT_MODEL_PROVIDER"] = chat_provider
+        os.environ["GRAPHRAG_CHAT_MODEL"] = chat_config["model"]
+        os.environ["GRAPHRAG_CHAT_API_BASE"] = chat_config["api_base"]
+        os.environ["GRAPHRAG_CHAT_API_KEY"] = chat_config["api_key"]
+        os.environ["GRAPHRAG_EMBED_MODEL_PROVIDER"] = embed_provider
+        os.environ["GRAPHRAG_EMBEDDING_MODEL"] = embed_config["model"]
+        os.environ["GRAPHRAG_EMBED_API_BASE"] = embed_config["api_base"]
+        os.environ["GRAPHRAG_EMBED_API_KEY"] = embed_config["api_key"]
+
+        # Backward compatibility for older settings.yaml templates.
+        os.environ["GRAPHRAG_MODEL_PROVIDER"] = chat_provider
+        os.environ["GRAPHRAG_LLM_MODEL"] = chat_config["model"]
+        os.environ["GRAPHRAG_API_BASE"] = chat_config["api_base"]
+        os.environ["GRAPHRAG_API_KEY"] = chat_config["api_key"]
+
+        logger.info(
+            "GraphRAG environment configured for index chat=%s, embed=%s",
+            chat_provider,
+            embed_provider,
+        )
+
+    def _provider_env_config(
+        self,
+        provider: ModelProvider,
+        model_type: ModelType,
+    ) -> dict[str, str]:
+        """Return environment-level model configuration for a provider."""
         if provider == "ollama":
-            os.environ["GRAPHRAG_API_KEY"] = "ollama"  # Dummy key for Ollama
-            os.environ["GRAPHRAG_LLM_MODEL"] = settings.ollama_llm_model
-            os.environ["GRAPHRAG_EMBEDDING_MODEL"] = settings.ollama_embed_model
-            os.environ["GRAPHRAG_API_BASE"] = settings.ollama_base_url or ""
-            os.environ["GRAPHRAG_MODEL_PROVIDER"] = "ollama"
-            os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(
-                settings.graphrag_concurrent_requests
-            )
-            os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
-            os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
-        elif provider == "gemini":
-            os.environ["GRAPHRAG_API_KEY"] = settings.gemini_api_key or ""
-            os.environ["GRAPHRAG_LLM_MODEL"] = settings.gemini_llm_model
-            os.environ["GRAPHRAG_EMBEDDING_MODEL"] = settings.gemini_embed_model
-            os.environ["GRAPHRAG_API_BASE"] = ""  # Empty for Gemini (uses default)
-            os.environ["GRAPHRAG_MODEL_PROVIDER"] = "gemini"
-            os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(
-                settings.graphrag_concurrent_requests
-            )
-            os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
-            os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
-
-        logger.info(f"GraphRAG environment configured for {provider}")
+            return {
+                "api_key": "ollama",
+                "model": settings.ollama_llm_model
+                if model_type == ModelType.Chat
+                else settings.ollama_embed_model,
+                "api_base": settings.ollama_base_url or "",
+            }
+        if provider == "gemini":
+            return {
+                "api_key": settings.gemini_api_key or "",
+                "model": settings.gemini_llm_model
+                if model_type == ModelType.Chat
+                else settings.gemini_embed_model,
+                "api_base": "",
+            }
+        return {
+            "api_key": settings.openrouter_api_key or "",
+            "model": settings.openrouter_llm_model
+            if model_type == ModelType.Chat
+            else settings.openrouter_embed_model,
+            "api_base": settings.openrouter_api_base,
+        }
 
     def _create_model_config(
         self, provider: ModelProvider, model_type: ModelType
@@ -176,50 +243,25 @@ class GraphRAGService:
         Returns:
             LanguageModelConfig: Configuration for the model.
         """
-        if provider == "ollama":
-            if model_type == ModelType.Chat:
-                return LanguageModelConfig(
-                    api_key="ollama",  # Dummy key for Ollama
-                    type=ModelType.Chat,
-                    model_provider="ollama",
-                    model=settings.ollama_llm_model,
-                    api_base=settings.ollama_base_url,
-                    max_retries=3,
-                )
-            else:  # Embedding
-                return LanguageModelConfig(
-                    api_key="ollama",  # Dummy key for Ollama
-                    type=ModelType.Embedding,
-                    model_provider="ollama",
-                    model=settings.ollama_embed_model,
-                    api_base=settings.ollama_base_url,
-                    max_retries=3,
-                )
-        elif provider == "gemini":
-            if model_type == ModelType.Chat:
-                return LanguageModelConfig(
-                    api_key=settings.gemini_api_key or "",
-                    type=ModelType.Chat,
-                    model_provider="gemini",
-                    model=settings.gemini_llm_model,
-                    max_retries=3,
-                )
-            else:  # Embedding
-                return LanguageModelConfig(
-                    api_key=settings.gemini_api_key or "",
-                    type=ModelType.Embedding,
-                    model_provider="gemini",
-                    model=settings.gemini_embed_model,
-                    max_retries=3,
-                )
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
+        provider_config = self._provider_env_config(provider, model_type)
+        api_base = provider_config["api_base"] or None
+        return LanguageModelConfig(
+            api_key=provider_config["api_key"],
+            type=model_type,
+            model_provider=provider,
+            model=provider_config["model"],
+            api_base=api_base,
+            max_retries=1 if provider == "ollama" else 3,
+        )
 
     def _init_models(self) -> None:
         """Initialize LLM and embedding models for querying."""
-        # Create model configurations for the query provider
-        chat_config = self._create_model_config(self.query_provider, ModelType.Chat)
-        embedding_config = self._create_model_config(self.query_provider, ModelType.Embedding)
+        # Create model configurations for the query providers
+        chat_config = self._create_model_config(self.query_chat_provider, ModelType.Chat)
+        embedding_config = self._create_model_config(
+            self.query_embed_provider,
+            ModelType.Embedding,
+        )
 
         # Initialize models for querying
         self.chat_model = ModelManager().get_or_create_chat_model(
@@ -236,7 +278,11 @@ class GraphRAGService:
 
         self.tokenizer = get_tokenizer(chat_config)
 
-        logger.info(f"Models initialized for query provider: {self.query_provider}")
+        logger.info(
+            "Models initialized for query chat provider: %s, embedding provider: %s",
+            self.query_chat_provider,
+            self.query_embed_provider,
+        )
 
     async def check_ollama_health(self) -> bool:
         """
@@ -264,6 +310,36 @@ class GraphRAGService:
             logger.error(f"Failed to connect to Ollama: {e}")
             raise OllamaConnectionError(f"Ollama service unavailable: {e}") from e
 
+    async def check_ollama_models(
+        self,
+        model_kind: Literal["chat", "embedding", "both"] = "both",
+    ) -> bool:
+        """Check if the selected Ollama models are pulled."""
+        if not settings.ollama_base_url:
+            return False
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{settings.ollama_base_url}/api/tags")
+                if response.status_code != 200:
+                    return False
+
+                data = response.json()
+                available_models = [model["name"] for model in data.get("models", [])]
+                checks: list[bool] = []
+                if model_kind in {"chat", "both"}:
+                    checks.append(
+                        any(settings.ollama_llm_model in model for model in available_models)
+                    )
+                if model_kind in {"embedding", "both"}:
+                    checks.append(
+                        any(settings.ollama_embed_model in model for model in available_models)
+                    )
+                return all(checks) if checks else True
+        except Exception as e:
+            logger.error(f"Failed to verify Ollama models: {e}")
+            return False
+
     async def check_gemini_health(self) -> bool:
         """
         Check if Gemini API is configured and the selected models exist.
@@ -281,6 +357,68 @@ class GraphRAGService:
         await self._verify_gemini_model(settings.gemini_embed_model, "embedding")
 
         logger.info("Gemini API key and model settings are valid")
+        return True
+
+    async def check_openrouter_health(
+        self,
+        *,
+        check_chat: bool = True,
+        check_embedding: bool = False,
+    ) -> bool:
+        """
+        Check if OpenRouter API is configured and selected models are usable.
+
+        Embedding validation calls /embeddings because OpenRouter model listing does not
+        reliably indicate embedding endpoint support.
+        """
+        if not settings.openrouter_api_key:
+            raise OpenRouterConfigurationError("OpenRouter API key not configured")
+
+        headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                if check_chat:
+                    response = await client.get(
+                        f"{settings.openrouter_api_base}/models",
+                        headers=headers,
+                    )
+                    if response.status_code in {401, 403}:
+                        raise OpenRouterConfigurationError(
+                            "OpenRouter rejected model verification. Check APP_OPENROUTER_API_KEY."
+                        )
+                    response.raise_for_status()
+                    model_ids = {item.get("id") for item in response.json().get("data", [])}
+                    if settings.openrouter_llm_model not in model_ids:
+                        raise OpenRouterConfigurationError(
+                            f"OpenRouter LLM model '{settings.openrouter_llm_model}' was not found."
+                        )
+
+                if check_embedding:
+                    response = await client.post(
+                        f"{settings.openrouter_api_base}/embeddings",
+                        headers=headers,
+                        json={
+                            "model": settings.openrouter_embed_model,
+                            "input": "health check",
+                        },
+                    )
+                    if response.status_code in {400, 404, 422}:
+                        raise OpenRouterConfigurationError(
+                            "OpenRouter embedding model "
+                            f"'{settings.openrouter_embed_model}' is not usable through /embeddings. "
+                            "Use a validated OpenRouter embedding model or switch embeddings to Gemini/Ollama."
+                        )
+                    if response.status_code in {401, 403}:
+                        raise OpenRouterConfigurationError(
+                            "OpenRouter rejected embedding verification. Check APP_OPENROUTER_API_KEY."
+                        )
+                    response.raise_for_status()
+        except OpenRouterConfigurationError:
+            raise
+        except Exception as e:
+            raise OpenRouterConfigurationError(f"Failed to verify OpenRouter models: {e}") from e
+
+        logger.info("OpenRouter API key and selected model settings are valid")
         return True
 
     async def _verify_gemini_model(self, model: str, model_label: str) -> None:
@@ -359,7 +497,12 @@ class GraphRAGService:
 
         return error_text
 
-    async def check_provider_health(self, provider: ModelProvider | None = None) -> bool:
+    async def check_provider_health(
+        self,
+        provider: ModelProvider | None = None,
+        *,
+        model_kind: Literal["chat", "embedding", "both"] = "both",
+    ) -> bool:
         """
         Check if the specified (or query) provider is available.
 
@@ -372,9 +515,14 @@ class GraphRAGService:
         check_provider = provider or self.query_provider
 
         if check_provider == "ollama":
-            return await self.check_ollama_health()
+            return await self.check_ollama_health() and await self.check_ollama_models(model_kind)
         elif check_provider == "gemini":
             return await self.check_gemini_health()
+        elif check_provider == "openrouter":
+            return await self.check_openrouter_health(
+                check_chat=model_kind in {"chat", "both"},
+                check_embedding=model_kind in {"embedding", "both"},
+            )
         return False
 
     async def verify_models(self) -> dict[str, bool]:
@@ -384,10 +532,19 @@ class GraphRAGService:
         Returns:
             dict: Model availability status.
         """
-        if self.query_provider == "gemini":
-            # For Gemini, we just check if API key is configured
+        if self.query_chat_provider == "gemini" or self.query_embed_provider == "gemini":
             has_key = bool(settings.gemini_api_key)
-            return {"llm": has_key, "embedding": has_key}
+            return {
+                "llm": has_key if self.query_chat_provider == "gemini" else True,
+                "embedding": has_key if self.query_embed_provider == "gemini" else True,
+            }
+
+        if self.query_chat_provider == "openrouter" or self.query_embed_provider == "openrouter":
+            has_key = bool(settings.openrouter_api_key)
+            return {
+                "llm": has_key if self.query_chat_provider == "openrouter" else True,
+                "embedding": has_key if self.query_embed_provider == "openrouter" else True,
+            }
 
         # For Ollama, check if models are pulled
         if not settings.ollama_base_url:
@@ -591,7 +748,10 @@ class GraphRAGService:
             self._relationships_objects = None
             self._reports_objects = None
             self._text_units_objects = None
-            self._search_engine = None
+            self._communities_objects = None
+            self._local_search_engine = None
+            self._global_search_engine = None
+            self._drift_search_engine = None
 
             # Load and count entities/relationships
             stats = self._count_indexed_data()
@@ -695,12 +855,14 @@ class GraphRAGService:
             # Convert to GraphRAG objects
             self._entities_objects = read_indexer_entities(entity_df, community_df, 2)
             self._relationships_objects = read_indexer_relationships(relationship_df)
+            self._communities_objects = read_indexer_communities(community_df, report_df)
             self._reports_objects = read_indexer_reports(report_df, community_df, 2)
             self._text_units_objects = read_indexer_text_units(text_unit_df)
 
             logger.info(
                 f"Loaded {len(self._entities_objects)} entities, "
                 f"{len(self._relationships_objects)} relationships, "
+                f"{len(self._communities_objects)} communities, "
                 f"{len(self._reports_objects)} reports, "
                 f"{len(self._text_units_objects)} text units"
             )
@@ -708,6 +870,7 @@ class GraphRAGService:
             logger.error(f"Failed to load indexed data objects: {e}")
             self._entities_objects = []
             self._relationships_objects = []
+            self._communities_objects = []
             self._reports_objects = []
             self._text_units_objects = []
 
@@ -765,7 +928,10 @@ class GraphRAGService:
             return []
 
     async def query(
-        self, question: str, conversation_history: ConversationHistory | None = None
+        self,
+        question: str,
+        conversation_history: ConversationHistory | None = None,
+        search_mode: SearchMode = "auto",
     ) -> dict[str, Any]:
         """
         Execute a query against the indexed knowledge graph.
@@ -784,148 +950,279 @@ class GraphRAGService:
             # Load indexed data objects
             self._load_indexed_data_objects()
 
-            # Initialize search engine if needed
-            if self._search_engine is None:
-                self._search_engine = self._create_search_engine()
+            resolved_mode, mode_reason = self.route_search_mode(question, search_mode)
+            try:
+                result = await asyncio.wait_for(
+                    self._execute_search(question, conversation_history, resolved_mode),
+                    timeout=settings.graphrag_query_timeout_seconds,
+                )
+            except Exception as search_error:
+                if search_mode == "auto" and resolved_mode != "local":
+                    failed_mode = resolved_mode
+                    logger.warning(
+                        "GraphRAG %s query failed; retrying in local mode: %s",
+                        failed_mode,
+                        search_error,
+                    )
+                    resolved_mode = "local"
+                    mode_reason = (
+                        f"{mode_reason} Local fallback was used because {failed_mode} "
+                        "the routed mode failed or timed out."
+                    )
+                    result = await asyncio.wait_for(
+                        self._execute_search(question, conversation_history, resolved_mode),
+                        timeout=settings.graphrag_query_timeout_seconds,
+                    )
+                else:
+                    raise
 
-            # Execute search (conversation history will be added later)
-            logger.info(f"Executing GraphRAG query: {question[:50]}...")
-            result = await self._search_engine.search(
-                query=question, conversation_history=conversation_history
-            )
+            logger.info("GraphRAG %s query completed successfully", resolved_mode)
 
-            logger.info("GraphRAG query completed successfully")
-
-            # Extract retrieved entities and relationships from context_data
-            retrieved_entities: list = []
-            retrieved_relationships: list = []
-
-            if hasattr(result, "context_data"):
-                try:
-                    context_data_dict = result.context_data
-                    if isinstance(context_data_dict, dict):
-                        # Log ALL keys in context_data to see what's available
-                        logger.info(f"Context data keys: {list(context_data_dict.keys())}")
-
-                        # Log details of each DataFrame
-                        for key, value in context_data_dict.items():
-                            if hasattr(value, "columns"):
-                                logger.info(f"{key} DataFrame shape: {value.shape}")
-                                if not value.empty:
-                                    logger.info(
-                                        f"{key} DataFrame columns: {value.columns.tolist()}"
-                                    )
-                                    if "id" in value.columns:
-                                        logger.info(f"{key} IDs: {value['id'].tolist()}")
-                                    # Log full DataFrame content for sources to see citation numbers
-                                    if key == "sources":
-                                        logger.info(
-                                            f"Sources DataFrame full content:\n{value.to_string()}"
-                                        )
-
-                        # Get entities used in context
-                        entities_df = context_data_dict.get("entities")
-                        if (
-                            entities_df is not None
-                            and hasattr(entities_df, "empty")
-                            and not entities_df.empty
-                        ):
-                            # Filter only entities that were included in context
-                            if "in_context" in entities_df.columns:
-                                entities_in_context = entities_df[entities_df["in_context"] == True]  # noqa: E712
-                            else:
-                                entities_in_context = entities_df
-
-                            # Log available columns for debugging
-                            logger.info(
-                                f"Entity DataFrame columns: {entities_in_context.columns.tolist()}"
-                            )
-                            logger.info(
-                                f"Entity DataFrame index: {entities_in_context.index.tolist()}"
-                            )
-                            logger.info(
-                                f"Entity IDs from 'id' column: {entities_in_context['id'].tolist()}"
-                            )
-
-                            # Convert to serializable format with proper field names
-                            # Use the 'id' column value as the citation index (this is what GraphRAG uses in "Sources (X)")
-                            retrieved_entities = []
-                            for _, row in entities_in_context.iterrows():
-                                # The 'id' column contains the citation number (e.g., 7, 11, 14)
-                                citation_id = row.get("id", None)
-                                entity_dict = {
-                                    "id": str(citation_id) if citation_id is not None else "",
-                                    "title": str(
-                                        row.get("entity", "")
-                                    ),  # 'entity' column contains the name
-                                    "type": "entity",  # Type not available in this DataFrame
-                                    "description": str(row.get("description", "")),
-                                    "rank": row.get("number of relationships", 0),
-                                    # Use the 'id' column as the citation index
-                                    "index": int(citation_id)
-                                    if citation_id is not None
-                                    and isinstance(citation_id, (int, float, str))
-                                    else None,
-                                }
-                                retrieved_entities.append(
-                                    self._convert_to_serializable(entity_dict)
-                                )
-
-                        # Get relationships used in context
-                        rels_df = context_data_dict.get("relationships")
-                        if rels_df is not None and hasattr(rels_df, "empty") and not rels_df.empty:
-                            # Filter only relationships that were included in context
-                            if "in_context" in rels_df.columns:
-                                rels_in_context = rels_df[rels_df["in_context"] == True]  # noqa: E712
-                            else:
-                                rels_in_context = rels_df
-
-                            # Log available columns for debugging
-                            logger.info(
-                                f"Relationship DataFrame columns: {rels_in_context.columns.tolist()}"
-                            )
-                            logger.info(
-                                f"Relationship DataFrame index: {rels_in_context.index.tolist()}"
-                            )
-                            logger.info(
-                                f"Relationship IDs from 'id' column: {rels_in_context['id'].tolist()}"
-                            )
-
-                            # Convert to serializable format with proper field names
-                            # Use the 'id' column value as the citation index
-                            retrieved_relationships = []
-                            for _, row in rels_in_context.iterrows():
-                                # The 'id' column contains the citation number
-                                citation_id = row.get("id", None)
-                                rel_dict = {
-                                    "id": str(citation_id) if citation_id is not None else "",
-                                    "source": str(row.get("source", "")),
-                                    "target": str(row.get("target", "")),
-                                    "description": str(row.get("description", "")),
-                                    "weight": float(row.get("weight", 1.0)),
-                                    # Use the 'id' column as the citation index
-                                    "index": int(citation_id)
-                                    if citation_id is not None
-                                    and isinstance(citation_id, (int, float, str))
-                                    else None,
-                                }
-                                retrieved_relationships.append(
-                                    self._convert_to_serializable(rel_dict)
-                                )
-                except Exception as e:
-                    logger.warning(f"Failed to extract context data: {e}")
+            retrieved_entities, retrieved_relationships = self._extract_retrieved_context(result)
 
             return {
                 "answer": result.response,
                 "retrieved_entities": retrieved_entities,
                 "retrieved_relationships": retrieved_relationships,
+                "search_mode_used": resolved_mode,
+                "search_mode_reason": mode_reason,
             }
 
         except Exception as e:
             logger.error(f"Failed to execute query: {e}")
             raise QueryError(f"Failed to execute query: {e}") from e
 
-    def _create_search_engine(self) -> LocalSearch:
+    async def _execute_search(
+        self,
+        question: str,
+        conversation_history: ConversationHistory | None,
+        resolved_mode: ResolvedSearchMode,
+    ) -> Any:
+        """Execute one GraphRAG search mode."""
+        search_engine = self._get_search_engine(resolved_mode)
+        logger.info(
+            "Executing GraphRAG %s query: %s...",
+            resolved_mode,
+            question[:50],
+        )
+        if resolved_mode == "local":
+            return await search_engine.search(
+                query=question,
+                conversation_history=conversation_history,
+            )
+        return await search_engine.search(question)
+
+    def route_search_mode(
+        self,
+        question: str,
+        requested_mode: SearchMode = "auto",
+    ) -> tuple[ResolvedSearchMode, str]:
+        """Resolve a requested search mode using lightweight query pattern routing."""
+        if requested_mode != "auto":
+            return requested_mode, f"Manual search mode override: {requested_mode}."
+
+        normalized = self._normalize_query_text(question)
+        source_bound_patterns = [
+            "a megadott wikipedia cikk alapjan",
+            "a cikk alapjan",
+            "a szoveg alapjan",
+            "csak azokat",
+            "kifejezetten szerepelnek",
+            "szerepel a szovegben",
+            "gyujtsd ossze",
+            "csoportositsd",
+            "listazd",
+            "based on the article",
+            "based on the text",
+            "only mention",
+            "explicitly mentioned",
+        ]
+        global_patterns = [
+            "osszefogl",
+            "átfogó",
+            "atfogo",
+            "teljes dokumentum",
+            "teljes adat",
+            "fő téma",
+            "fo tema",
+            "main themes",
+            "overview",
+            "summarize",
+            "summary",
+            "trend",
+            "patterns",
+            "whole dataset",
+            "entire dataset",
+        ]
+        drift_patterns = [
+            "hogyan függ össze",
+            "hogyan fugg ossze",
+            "kapcsolat",
+            "miért",
+            "miert",
+            "why",
+            "how are",
+            "related",
+            "relationship between",
+            "compare",
+            "contrast",
+            "influence",
+            "cause",
+            "hatás",
+            "hatas",
+        ]
+
+        if any(pattern in normalized for pattern in source_bound_patterns):
+            return (
+                "local",
+                "Auto router selected local because the query asks for source-bound extraction from the text.",
+            )
+        if any(pattern in normalized for pattern in global_patterns):
+            return "global", "Auto router selected global for an overview or dataset-level query."
+        if any(pattern in normalized for pattern in drift_patterns):
+            return "drift", "Auto router selected DRIFT for a multi-hop relationship query."
+        if self._looks_like_multi_entity_question(question):
+            return "drift", "Auto router selected DRIFT because the question mentions multiple entities."
+        return "local", "Auto router selected local for a specific entity or detail query."
+
+    def _normalize_query_text(self, question: str) -> str:
+        """Normalize query text for simple multilingual routing."""
+        text = question.casefold()
+        replacements = {
+            "á": "a",
+            "é": "e",
+            "í": "i",
+            "ó": "o",
+            "ö": "o",
+            "ő": "o",
+            "ú": "u",
+            "ü": "u",
+            "ű": "u",
+        }
+        for source, target in replacements.items():
+            text = text.replace(source, target)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _looks_like_multi_entity_question(self, question: str) -> bool:
+        """Return True when a query appears to connect more than one named entity."""
+        capitalized_terms = re.findall(r"\b[A-ZÁÉÍÓÖŐÚÜŰ][\wÁÉÍÓÖŐÚÜŰáéíóöőúüű-]+", question)
+        stopwords = {"What", "Who", "When", "Where", "Why", "How", "Mi", "Ki", "Mikor", "Hol"}
+        entity_like_terms = [term for term in capitalized_terms if term not in stopwords]
+        return len(set(entity_like_terms)) >= 2
+
+    def _is_ollama_query(self) -> bool:
+        """Return True when query-time generation uses local Ollama."""
+        return self.query_chat_provider == "ollama"
+
+    def _local_context_params(self) -> dict[str, Any]:
+        """Return local search context settings tuned for the active query provider."""
+        if self._is_ollama_query():
+            return {
+                "text_unit_prop": 0.35,
+                "community_prop": 0.15,
+                "conversation_history_max_turns": 2,
+                "conversation_history_user_turns_only": True,
+                "top_k_mapped_entities": 14,
+                "top_k_relationships": 18,
+                "include_entity_rank": True,
+                "include_relationship_weight": True,
+                "include_community_rank": True,
+                "return_candidate_context": False,
+                "embedding_vectorstore_key": EntityVectorStoreKey.ID,
+                "max_tokens": 6000,
+            }
+
+        return {
+            "text_unit_prop": 0.35,
+            "community_prop": 0.25,
+            "conversation_history_max_turns": 3,
+            "conversation_history_user_turns_only": True,
+            "top_k_mapped_entities": 25,
+            "top_k_relationships": 30,
+            "include_entity_rank": True,
+            "include_relationship_weight": True,
+            "include_community_rank": True,
+            "return_candidate_context": False,
+            "embedding_vectorstore_key": EntityVectorStoreKey.ID,
+            "max_tokens": 12000,
+        }
+
+    def _get_search_engine(self, mode: ResolvedSearchMode) -> Any:
+        """Return a cached search engine for the selected mode."""
+        if mode == "local":
+            if self._local_search_engine is None:
+                self._local_search_engine = self._create_local_search_engine()
+            return self._local_search_engine
+        if mode == "global":
+            if self._global_search_engine is None:
+                self._global_search_engine = self._create_global_search_engine()
+            return self._global_search_engine
+        if self._drift_search_engine is None:
+            self._drift_search_engine = self._create_drift_search_engine()
+        return self._drift_search_engine
+
+    def _extract_retrieved_context(self, result: Any) -> tuple[list[Any], list[Any]]:
+        """Extract serializable local context entities and relationships from search results."""
+        retrieved_entities: list[Any] = []
+        retrieved_relationships: list[Any] = []
+
+        if not hasattr(result, "context_data"):
+            return retrieved_entities, retrieved_relationships
+
+        try:
+            context_data_dict = result.context_data
+            if not isinstance(context_data_dict, dict):
+                return retrieved_entities, retrieved_relationships
+
+            logger.info(f"Context data keys: {list(context_data_dict.keys())}")
+
+            entities_df = context_data_dict.get("entities")
+            if entities_df is not None and hasattr(entities_df, "empty") and not entities_df.empty:
+                if "in_context" in entities_df.columns:
+                    entities_in_context = entities_df[entities_df["in_context"] == True]  # noqa: E712
+                else:
+                    entities_in_context = entities_df
+
+                for _, row in entities_in_context.iterrows():
+                    citation_id = row.get("id", None)
+                    entity_dict = {
+                        "id": str(citation_id) if citation_id is not None else "",
+                        "title": str(row.get("entity", row.get("title", ""))),
+                        "type": "entity",
+                        "description": str(row.get("description", "")),
+                        "rank": row.get("number of relationships", 0),
+                        "index": int(citation_id)
+                        if citation_id is not None and isinstance(citation_id, (int, float, str))
+                        else None,
+                    }
+                    retrieved_entities.append(self._convert_to_serializable(entity_dict))
+
+            rels_df = context_data_dict.get("relationships")
+            if rels_df is not None and hasattr(rels_df, "empty") and not rels_df.empty:
+                if "in_context" in rels_df.columns:
+                    rels_in_context = rels_df[rels_df["in_context"] == True]  # noqa: E712
+                else:
+                    rels_in_context = rels_df
+
+                for _, row in rels_in_context.iterrows():
+                    citation_id = row.get("id", None)
+                    rel_dict = {
+                        "id": str(citation_id) if citation_id is not None else "",
+                        "source": str(row.get("source", "")),
+                        "target": str(row.get("target", "")),
+                        "description": str(row.get("description", "")),
+                        "weight": float(row.get("weight", 1.0)),
+                        "index": int(citation_id)
+                        if citation_id is not None and isinstance(citation_id, (int, float, str))
+                        else None,
+                    }
+                    retrieved_relationships.append(self._convert_to_serializable(rel_dict))
+        except Exception as e:
+            logger.warning(f"Failed to extract context data: {e}")
+
+        return retrieved_entities, retrieved_relationships
+
+    def _create_local_search_engine(self) -> LocalSearch:
         """Create and configure local search engine."""
         try:
             # Ensure data objects are loaded and not None
@@ -1000,33 +1297,16 @@ Add sections and commentary to the response as appropriate for the length and fo
 """
 
             # Create search engine
-            # Note: text_unit_prop and community_prop control token allocation in the context window.
-            # text_unit_prop (0.5) allocates 50% of tokens to raw text chunks for detailed, specific answers.
-            # community_prop (0.1) allocates 10% to high-level community summaries for broader understanding.
-            # The remaining ~40% goes to entities and relationships from the knowledge graph.
             search_engine = LocalSearch(
                 model=self.chat_model,
                 context_builder=context_builder,
                 tokenizer=self.tokenizer,
                 system_prompt=custom_system_prompt,
                 model_params={
-                    "max_tokens": 2000,
+                    "max_tokens": 1200 if self._is_ollama_query() else 2000,
                     "temperature": 0.0,
                 },
-                context_builder_params={
-                    "text_unit_prop": 0.5,
-                    "community_prop": 0.1,
-                    "conversation_history_max_turns": 3,
-                    "conversation_history_user_turns_only": True,
-                    "top_k_mapped_entities": 10,
-                    "top_k_relationships": 10,
-                    "include_entity_rank": True,
-                    "include_relationship_weight": True,
-                    "include_community_rank": False,
-                    "return_candidate_context": False,
-                    "embedding_vectorstore_key": EntityVectorStoreKey.ID,
-                    "max_tokens": 12000,
-                },
+                context_builder_params=self._local_context_params(),
                 response_type="multiple paragraphs",
             )
 
@@ -1036,6 +1316,122 @@ Add sections and commentary to the response as appropriate for the length and fo
         except Exception as e:
             logger.error(f"Failed to create search engine: {e}")
             raise QueryError(f"Failed to initialize search engine: {e}") from e
+
+    def _create_global_search_engine(self) -> GlobalSearch:
+        """Create and configure global search engine."""
+        try:
+            if not self._reports_objects:
+                raise QueryError("No community reports loaded - global search requires indexing")
+
+            context_builder = GlobalCommunityContext(
+                community_reports=self._reports_objects or [],
+                communities=self._communities_objects or [],
+                entities=self._entities_objects or [],
+                tokenizer=self.tokenizer,
+            )
+
+            map_llm_params: dict[str, Any] = {
+                "max_tokens": 1000,
+                "temperature": 0.0,
+            }
+            json_mode = self.query_chat_provider != "ollama"
+            if json_mode:
+                map_llm_params["response_format"] = {"type": "json_object"}
+
+            search_engine = GlobalSearch(
+                model=self.chat_model,
+                context_builder=context_builder,
+                tokenizer=self.tokenizer,
+                max_data_tokens=12000,
+                map_llm_params=map_llm_params,
+                reduce_llm_params={
+                    "max_tokens": 2000,
+                    "temperature": 0.0,
+                },
+                allow_general_knowledge=False,
+                json_mode=json_mode,
+                context_builder_params={
+                    "use_community_summary": False,
+                    "shuffle_data": True,
+                    "include_community_rank": True,
+                    "min_community_rank": 0,
+                    "community_rank_name": "rank",
+                    "include_community_weight": True,
+                    "community_weight_name": "occurrence weight",
+                    "normalize_community_weight": True,
+                    "max_tokens": 12000,
+                    "context_name": "Reports",
+                },
+                concurrent_coroutines=2,
+                response_type="multiple paragraphs",
+            )
+
+            logger.info("Global search engine initialized successfully")
+            return search_engine
+        except Exception as e:
+            logger.error(f"Failed to create global search engine: {e}")
+            raise QueryError(f"Failed to initialize global search engine: {e}") from e
+
+    def _create_drift_search_engine(self) -> DRIFTSearch:
+        """Create and configure DRIFT search engine."""
+        try:
+            if not self._entities_objects:
+                raise QueryError("No entities loaded - DRIFT search requires indexing")
+            if not self._reports_objects:
+                raise QueryError("No community reports loaded - DRIFT search requires indexing")
+
+            description_embedding_store = LanceDBVectorStore(
+                vector_store_schema_config=VectorStoreSchemaConfig(
+                    index_name="default-entity-description"
+                )
+            )
+            description_embedding_store.connect(db_uri=self.lancedb_uri)
+
+            full_content_embedding_store = LanceDBVectorStore(
+                vector_store_schema_config=VectorStoreSchemaConfig(
+                    index_name="default-community-full_content"
+                )
+            )
+            full_content_embedding_store.connect(db_uri=self.lancedb_uri)
+            read_indexer_report_embeddings(self._reports_objects or [], full_content_embedding_store)
+
+            if self._is_ollama_query():
+                n_depth = 1
+                drift_k_followups = 3
+                primer_folds = 1
+            else:
+                n_depth = 2
+                drift_k_followups = 8
+                primer_folds = 3
+
+            drift_params = DRIFTSearchConfig(
+                n_depth=n_depth,
+                drift_k_followups=drift_k_followups,
+                primer_folds=primer_folds,
+            )
+            context_builder = DRIFTSearchContextBuilder(
+                model=self.chat_model,
+                text_embedder=self.text_embedder,
+                entities=self._entities_objects or [],
+                relationships=self._relationships_objects or [],
+                reports=self._reports_objects or [],
+                entity_text_embeddings=description_embedding_store,
+                text_units=self._text_units_objects or [],
+                tokenizer=self.tokenizer,
+                config=drift_params,
+            )
+
+            search_engine = DRIFTSearch(
+                model=self.chat_model,
+                context_builder=context_builder,
+                tokenizer=self.tokenizer,
+            )
+
+            logger.info("DRIFT search engine initialized successfully")
+            return search_engine
+        except Exception as e:
+            logger.error(f"Failed to create DRIFT search engine: {e}")
+            raise QueryError(f"Failed to initialize DRIFT search engine: {e}") from e
 
     def get_full_graph(self) -> dict[str, Any]:
         """
@@ -1540,6 +1936,77 @@ Add sections and commentary to the response as appropriate for the length and fo
             "indexed": len(entities) > 0 or len(relationships) > 0,
             "last_indexed_at": (self._last_load_time.isoformat() if self._last_load_time else None),
         }
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Return graph quality and provider diagnostics."""
+        full_graph = self.get_full_graph()
+        metadata = full_graph.get("metadata", {})
+        entity_count = len(self._load_entities())
+        relationship_count = len(self._load_relationships())
+        document_count = self._count_parquet_records("documents.parquet")
+        text_unit_count = self._count_parquet_records("text_units.parquet")
+        community_count = self._count_parquet_records("communities.parquet")
+        ratio = relationship_count / entity_count if entity_count else 0.0
+
+        warnings: list[str] = []
+        if community_count <= 1:
+            warnings.append("1 or fewer communities found; Global Search will have weak context.")
+        if entity_count > 0 and ratio < 0.75:
+            warnings.append("Low relationship/entity ratio; the graph has many nodes but few edges.")
+        if metadata.get("isolated_node_count", 0) > 0:
+            warnings.append(
+                f"{metadata.get('isolated_node_count')} isolated nodes detected; retrieval may be fragmented."
+            )
+        if not settings.embedding_config_matches_index():
+            warnings.append(
+                "Query embedding provider/model differs from index embedding provider/model; "
+                "LanceDB retrieval may be inaccurate. Reindex or align APP_QUERY_EMBED_PROVIDER."
+            )
+
+        return {
+            "document_count": document_count,
+            "text_unit_count": text_unit_count,
+            "entity_count": entity_count,
+            "relationship_count": relationship_count,
+            "community_count": community_count,
+            "relationship_entity_ratio": round(ratio, 3),
+            "isolated_node_count": int(metadata.get("isolated_node_count", 0)),
+            "provider_config": self.get_provider_config_summary(),
+            "warnings": warnings,
+        }
+
+    def get_provider_config_summary(self) -> dict[str, Any]:
+        """Return non-secret provider and model configuration."""
+        return {
+            "index_chat": {
+                "provider": self.index_chat_provider,
+                "model": settings.get_model_name(self.index_chat_provider, "chat"),
+            },
+            "index_embedding": {
+                "provider": self.index_embed_provider,
+                "model": settings.get_model_name(self.index_embed_provider, "embedding"),
+            },
+            "query_chat": {
+                "provider": self.query_chat_provider,
+                "model": settings.get_model_name(self.query_chat_provider, "chat"),
+            },
+            "query_embedding": {
+                "provider": self.query_embed_provider,
+                "model": settings.get_model_name(self.query_embed_provider, "embedding"),
+            },
+            "embedding_matches_index": settings.embedding_config_matches_index(),
+        }
+
+    def _count_parquet_records(self, filename: str) -> int:
+        """Count rows in a GraphRAG parquet output file."""
+        path = self.output_dir / filename
+        if not path.exists():
+            return 0
+        try:
+            return int(len(pd.read_parquet(path)))
+        except Exception as e:
+            logger.warning("Failed to count %s: %s", filename, e)
+            return 0
 
 
 # Global service instance

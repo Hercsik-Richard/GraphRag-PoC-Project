@@ -130,13 +130,23 @@ async def query_conversation(
 
     try:
         # Process query with GraphRAG
-        result = await chat_service.process_query(db, conversation_id, query.question)
+        result = await chat_service.process_query(
+            db,
+            conversation_id,
+            query.question,
+            query.search_mode,
+        )
 
         # Convert to response schema
         message = MessageSchema(**result["message"])
         retrieved_graph = result["retrieved_graph"]
 
-        return QueryResponseSchema(message=message, retrieved_graph=retrieved_graph)
+        return QueryResponseSchema(
+            message=message,
+            retrieved_graph=retrieved_graph,
+            search_mode_used=result["search_mode_used"],
+            search_mode_reason=result["search_mode_reason"],
+        )
 
     except chat_service.QueryProcessingError as e:
         logger.error(f"Query processing error: {e}")

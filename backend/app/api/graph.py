@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.schemas import GraphDataSchema, GraphStatsSchema
+from app.schemas import GraphDataSchema, GraphDiagnosticsSchema, GraphStatsSchema
 from app.services.graphrag import graphrag_service
 
 logger = logging.getLogger(__name__)
@@ -46,4 +46,23 @@ async def get_graph_stats() -> GraphStatsSchema:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve graph statistics",
+        ) from e
+
+
+@router.get("/diagnostics", response_model=GraphDiagnosticsSchema)
+async def get_graph_diagnostics() -> GraphDiagnosticsSchema:
+    """
+    Get graph quality diagnostics and provider configuration summary.
+
+    Returns:
+        GraphDiagnosticsSchema: Counts, graph quality signals, providers, and warnings.
+    """
+    try:
+        diagnostics = graphrag_service.get_diagnostics()
+        return GraphDiagnosticsSchema(**diagnostics)
+    except Exception as e:
+        logger.error(f"Failed to get graph diagnostics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve graph diagnostics",
         ) from e

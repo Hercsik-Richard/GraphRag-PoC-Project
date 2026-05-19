@@ -11,6 +11,7 @@ from app.schemas.chat import (
 )
 from app.schemas.graph import (
     EdgeDataSchema,
+    GraphDiagnosticsSchema,
     GraphDataSchema,
     GraphEdgeSchema,
     GraphNodeSchema,
@@ -37,6 +38,7 @@ __all__ = [
     "RetrievedGraphSchema",
     # Graph schemas
     "EdgeDataSchema",
+    "GraphDiagnosticsSchema",
     "GraphDataSchema",
     "GraphEdgeSchema",
     "GraphNodeSchema",

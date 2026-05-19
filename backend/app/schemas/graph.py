@@ -71,3 +71,17 @@ class GraphStatsSchema(BaseModel):
     relationship_count: int
     indexed: bool
     last_indexed_at: str | None = None
+
+
+class GraphDiagnosticsSchema(BaseModel):
+    """Schema for graph quality and model provider diagnostics."""
+
+    document_count: int
+    text_unit_count: int
+    entity_count: int
+    relationship_count: int
+    community_count: int
+    relationship_entity_ratio: float
+    isolated_node_count: int
+    provider_config: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)

@@ -1,4 +1,4 @@
-# Multi-stage build for MythologyGraphRAG Backend
+# Multi-stage build for GraphRAG Backend
 
 # Stage 1: Build frontend
 FROM node:22-alpine AS frontend-builder

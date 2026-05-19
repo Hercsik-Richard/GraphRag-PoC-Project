@@ -32,11 +32,18 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     retrieved_entities JSON,
-    retrieved_relationships JSON
+    retrieved_relationships JSON,
+    search_mode_used VARCHAR(20),
+    search_mode_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
 ON messages(conversation_id, created_at);
+"""
+
+ALTER_MESSAGES_SEARCH_METADATA = """
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_mode_used VARCHAR(20);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_mode_reason TEXT;
 """
 
 CREATE_INDEXED_DOCUMENTS_TABLE = """
@@ -106,6 +113,7 @@ async def ensure_database_schema() -> None:
     async with engine.begin() as conn:
         await conn.execute(text(CREATE_CONVERSATIONS_TABLE))
         await conn.execute(text(CREATE_MESSAGES_TABLE))
+        await conn.execute(text(ALTER_MESSAGES_SEARCH_METADATA))
         await conn.execute(text(CREATE_INDEXED_DOCUMENTS_TABLE))
     logger.info("Database schema is ready")
 

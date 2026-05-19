@@ -1,5 +1,5 @@
 [project]
-name = "mythology-graphrag-backend"
+name = "graphrag-backend"
 version = "0.1.0"
 description = "Educational GraphRAG application backend using FastAPI and Microsoft GraphRAG"
 readme = "README.md"
@@ -19,6 +19,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pytest>=8.0.0",
     "ruff>=0.1.0",
     "pyright>=1.1.0",
 ]

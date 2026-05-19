@@ -10,7 +10,12 @@ export interface Message {
   created_at: string;
   retrieved_entities?: RetrievedEntity[];
   retrieved_relationships?: RetrievedRelationship[];
+  search_mode_used?: ResolvedSearchMode | null;
+  search_mode_reason?: string | null;
 }
+
+export type SearchMode = 'auto' | 'local' | 'global' | 'drift';
+export type ResolvedSearchMode = 'local' | 'global' | 'drift';
 
 export interface RetrievedEntity {
   id: string;
@@ -33,6 +38,7 @@ export interface RetrievedRelationship {
 
 export interface QueryRequest {
   question: string;
+  search_mode?: SearchMode;
 }
 
 export interface QueryResponse {
@@ -41,4 +47,6 @@ export interface QueryResponse {
     entities: RetrievedEntity[];
     relationships: RetrievedRelationship[];
   };
+  search_mode_used: ResolvedSearchMode;
+  search_mode_reason: string;
 }

@@ -1,223 +1,184 @@
-# 🏛️ Mythology GraphRAG - Knowledge Graph-Powered Greek Mythology Assistant
+# GraphRAG Knowledge Graph Assistant
 
-A complete **GraphRAG** (Graph Retrieval-Augmented Generation) application that demonstrates how to build knowledge graphs from text documents and use them to answer questions about Greek mythology. This project showcases modern AI capabilities using Microsoft's GraphRAG library with local LLMs via Ollama.
+Ez a projekt egy teljes, lokálisan is futtatható GraphRAG alkalmazás. Szöveges dokumentumokból tudásgráfot épít, a gráfot vizualizálja, majd természetes nyelvű kérdésekre válaszol a Microsoft GraphRAG keresési módjaival.
 
-![Mythology GraphRAG](docs/graphrag-preview.png)
+A rendszer nem kötődik egyetlen témához: bármilyen UTF-8 kódolású `.txt` forrásszöveggel használható dokumentum-alapú tudásgráf asszisztensként.
 
-## 🎯 What This Project Demonstrates
+## Fő képességek
 
-This repository serves as a comprehensive tutorial project for YouTube viewers learning about **GraphRAG** implementation - a more advanced approach than traditional RAG that creates knowledge graphs from documents.
+- Dokumentumfeltöltés és háttérben futó GraphRAG indexelés.
+- Entitások, kapcsolatok, közösségek és szövegegységek előállítása GraphRAG-gel.
+- Interaktív React Flow gráfnézet fő komponens, összekapcsolt nézet és teljes nézet szűrőkkel.
+- Chat felület beszélgetéslistával, üzenetelőzményekkel és kattintható forrás-entitásokkal.
+- `auto`, `local`, `global` és `drift` keresési módok.
+- Könnyű automatikus routing: az `auto` mód a kérdés alapján választ local, global vagy DRIFT keresést.
+- Lokális Ollama alapértelmezés, opcionális Gemini és OpenRouter provider támogatással.
+- Külön konfigurálható indexelési chat provider, indexelési embedding provider, lekérdezési chat provider és lekérdezési embedding provider.
+- Indexelési folyamatjelzés százalékkal, chunk állapottal és hibaüzenetekkel.
+- Graph diagnosztika: entitás- és kapcsolat-számok, izolált node-ok, provider konfiguráció és figyelmeztetések.
 
-It is featured in a YouTube tutorial covering GraphRAG development:
+## Technológiai stack
 
-🔗 [YouTube Tutorial](https://www.youtube.com/watch?v=0kVT1B1yrMc)
+Backend:
 
-[![https://www.youtube.com/@DevItWithMe](https://img.youtube.com/vi/0kVT1B1yrMc/0.jpg)](https://youtu.be/0kVT1B1yrMc)
+- Python 3.12
+- FastAPI
+- SQLAlchemy Core
+- PostgreSQL
+- Microsoft GraphRAG
+- pandas / parquet GraphRAG output olvasáshoz
+- uv csomagkezelés
 
-## 🚀 Key Features
+Frontend:
 
-- 📚 **Knowledge Graph Construction**: Automatically extracts entities and relationships from text documents
-- 🕸️ **Interactive Graph Visualization**: Explore the knowledge graph with React Flow-based UI
-- 🤖 **AI-Powered Q&A**: Ask natural language questions and get context-aware answers using graph retrieval
-- 🔒 **100% Local Inference**: Run everything locally with Ollama - no API keys required for basic usage
-- ☁️ **Optional Cloud Support**: Optionally use Google Gemini API for faster processing
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- SWR
+- React Flow
+- lucide-react ikonok
 
-## 🛠 Technology Stack
+Infrastruktúra:
 
-### Backend (Python)
+- Docker Compose
+- opcionális natív vagy konténeres Ollama
+- FastAPI által kiszolgált frontend build production módban
 
-- **FastAPI**: High-performance API framework with automatic OpenAPI documentation
-- **SQLAlchemy**: SQL toolkit for metadata storage
-- **Microsoft GraphRAG**: Graph-based RAG framework for knowledge extraction and querying
-- **PostgreSQL**: Relational database for conversation history
-- **Ollama**: Local LLM serving (supports Gemma, Llama, Mistral, etc.)
+## Projekt felépítése
 
-### Frontend (TypeScript/React)
+```text
+.
+├── docker-compose.yml
+├── README.md
+├── docs/
+│   └── graphrag-optimization.md
+├── backend/
+│   ├── Dockerfile
+│   ├── pyproject.toml
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── api/
+│   │   │   ├── chat.py
+│   │   │   ├── graph.py
+│   │   │   └── index.py
+│   │   ├── schemas/
+│   │   └── services/
+│   │       ├── chat.py
+│   │       └── graphrag.py
+│   ├── scripts/
+│   │   ├── init_db.py
+│   │   └── init_graphrag.py
+│   └── ragtest/
+│       ├── input/
+│       ├── output/
+│       └── cache/
+└── frontend/
+    ├── package.json
+    ├── vite.config.ts
+    └── src/
+        ├── app/
+        ├── pages/
+        ├── widgets/
+        ├── features/
+        ├── entities/
+        └── shared/
+```
 
-- **React 19**: Modern React with latest features
-- **Vite**: Lightning-fast build tool
-- **TailwindCSS**: Utility-first CSS framework
-- **SWR**: Data fetching with caching and revalidation
-- **React Flow**: Interactive graph visualization library
+## Gyors indítás Docker Compose-zal
 
-### Infrastructure
+Előfeltételek:
 
-- **Docker Compose**: Multi-container orchestration
-- **uv**: Fast Python package management
+- Docker és Docker Compose
+- PostgreSQL porthoz szabad `5432`, vagy átírt `APP_PG_PORT`
+- Ollama, ha lokális modellt használsz
+- legalább 8 GB RAM kisebb lokális modellekhez
 
-## 🏃‍♂️ Quick Start
-
-### Prerequisites
-
-- **Docker & Docker Compose** (required)
-- **8GB+ RAM** (for running local LLMs)
-- **10GB+ disk space** (for models and data)
-- **NVIDIA GPU** (optional, for faster inference)
-- **Git** (for cloning the repository)
-
-### 1. Clone and Setup
+1. Környezeti fájl létrehozása:
 
 ```bash
-# Clone the repository
-git clone https://github.com/dev-it-with-me/MythologyGraphRag.git
-cd MythologyGraphRag
-
-# Copy environment template
 cp .env.example .env
 ```
 
-### 2. Configure Environment Variables
-
-Edit `.env` with your preferred settings:
-
-```env
-# PostgreSQL Configuration
-APP_PG_USER=mythuser
-APP_PG_PASSWORD=your_secure_password
-APP_PG_DATABASE=mythology_db
-APP_PG_PORT=5432
-
-# Model Provider: "ollama" (local) or "gemini" (Google API)
-APP_MODEL_PROVIDER=ollama
-
-# Ollama Models
-APP_OLLAMA_BASE_URL=http://host.docker.internal:11434
-APP_OLLAMA_LLM_MODEL=qwen2.5:3b
-APP_OLLAMA_EMBED_MODEL=nomic-embed-text
-
-# Optional: Google Gemini API (faster, requires API key)
-# APP_MODEL_PROVIDER=gemini
-# APP_GEMINI_API_KEY=your-api-key-here
-```
-
-### 3. Create Required Directories
+2. GraphRAG munkakönyvtár biztosítása:
 
 ```bash
-# Create the ragtest directory (required for Docker build)
-mkdir -p backend/ragtest
+mkdir -p backend/ragtest/input backend/ragtest/output backend/ragtest/cache
 ```
 
-> **Note:** This directory is gitignored but required by Docker. If you later build a knowledge graph locally, you can easily switch to Docker and carry over your data.
-
-### 4. Start All Services
+3. Ollama lokális használata esetén indítsd el az Ollama szervert a host gépen:
 
 ```bash
-# Start all services (this will build frontend and download models automatically)
-docker compose up -d
-
-# Monitor the logs to see when everything is ready
-docker compose logs -f
-```
-
-> **Note:** First startup takes 5-10 minutes as it builds the frontend and downloads the LLM models.
-
-### 5. Initialize the Application
-
-```bash
-# Initialize database tables
-docker compose exec backend uv run scripts/init_db.py
-
-# Set up GraphRAG workspace
-docker compose exec backend uv run scripts/init_graphrag.py
-```
-
-### 6. Access the Application
-
-- **Application**: [http://localhost:8000](http://localhost:8000)
-- **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **API Redoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
-- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
-
-> **Note:** The frontend is built and served as static files by the backend. Everything runs on port 8000.
-
-## 📖 Usage Examples
-
-### Upload a Document
-
-```bash
-# Upload the sample Greek mythology document
-curl -X POST "http://localhost:8000/api/index/upload" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@{your_test_file_path}"
-```
-
-Or use the Swagger UI at http://localhost:8000/docs
-
-### Ask Questions
-
-Try asking these questions in the chat interface:
-
-- "Who is Zeus and what are his powers?"
-- "What is the relationship between Zeus and Hera?"
-- "Tell me about the Twelve Olympians"
-- "Who are the children of Kronos?"
-- "What happened during the Titanomachy?"
-
-### Data Flow
-
-1. **Document Upload**: Text documents are uploaded via API
-2. **Graph Extraction**: GraphRAG extracts entities (gods, places, events) and relationships
-3. **Graph Storage**: Knowledge graph is stored in LanceDB with vector embeddings
-4. **Query Processing**: User questions trigger graph traversal and context retrieval
-5. **Response Generation**: Retrieved context is sent to LLM for answer generation
-6. **History Tracking**: All conversations are persisted in PostgreSQL
-
-## 🛠️ Development Setup
-
-### Local Development (without Docker)
-
-If you prefer to run services locally:
-
-1. **Install Python dependencies:**
-
-```bash
-# Install uv package manager
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies
-cd backend
-uv sync
-```
-
-2. **Start PostgreSQL:**
-
-```bash
-docker run -d \
-  --name postgres \
-  -p 5432:5432 \
-  -e POSTGRES_USER=mythuser \
-  -e POSTGRES_PASSWORD=mythpass123 \
-  -e POSTGRES_DB=mythology_db \
-  postgres:17-alpine
-```
-
-3. **Start Ollama:**
-
-```bash
-# Install Ollama (see https://ollama.ai)
 ollama serve
-
-# Pull required models
 ollama pull qwen2.5:3b
 ollama pull nomic-embed-text
 ```
 
-4. **Configure environment:**
+Apple Silicon gépen ez az ajánlott mód, mert a natív Ollama használni tudja a Metal gyorsítást. A Docker Compose alapértelmezett `APP_OLLAMA_BASE_URL` értéke ezért `http://host.docker.internal:11434`.
+
+4. Konténerek indítása:
+
+```bash
+docker compose up -d --build
+```
+
+5. Logok követése:
+
+```bash
+docker compose logs -f backend
+```
+
+Az alkalmazás production módban egyetlen porton érhető el:
+
+- App: http://localhost:8000
+- OpenAPI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+- Health check: http://localhost:8000/health
+- Graph diagnosztika: http://localhost:8000/api/graph/diagnostics
+
+A backend induláskor létrehozza a szükséges adatbázistáblákat, a Docker image pedig induláskor inicializálja a GraphRAG workspace konfigurációt.
+
+## Konténeres Ollama
+
+Ha nem natív Ollama-t szeretnél használni, a compose fájl tartalmaz egy opcionális `container-ollama` profilt:
+
+```bash
+docker compose --profile container-ollama up -d --build
+```
+
+Ebben az esetben állítsd az Ollama címet a konténeres szolgáltatásra:
+
+```env
+APP_OLLAMA_BASE_URL=http://ollama:11434
+```
+
+## Lokális fejlesztés Docker nélkül
+
+Backend:
 
 ```bash
 cd backend
 cp .env.example .env.local
-# Edit .env.local with your local settings
-```
-
-5. **Start the backend:**
-
-```bash
-cd backend
+uv sync
+uv run scripts/init_graphrag.py
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-6. **Start the frontend:**
+PostgreSQL indítható külön Docker konténerben:
+
+```bash
+docker run -d \
+  --name graphrag-postgres \
+  -p 5432:5432 \
+  -e POSTGRES_USER=graphrag_user \
+  -e POSTGRES_PASSWORD=graphrag_pass123 \
+  -e POSTGRES_DB=graphrag_db \
+  postgres:17-alpine
+```
+
+Frontend:
 
 ```bash
 cd frontend
@@ -225,231 +186,229 @@ npm install
 npm run dev
 ```
 
-> **Note:** In local development, frontend runs on port 3000 with Vite's dev server proxying API requests to the backend on port 8000.
+Fejlesztés közben:
 
-### 🐳 Docker Deployment Details
+- frontend: http://localhost:3000
+- backend API: http://localhost:8000
 
-The Docker setup uses a multi-stage build that:
+A Vite dev server a `/api` kéréseket a backend felé proxyzza.
 
-1. **Builds the frontend** using Node.js 22
-2. **Installs Python dependencies** using uv
-3. **Creates the runtime image** with both backend and pre-built frontend static files
+## Fontos konfigurációk
 
-### Architecture
+Alapértelmezésben minden provider Ollama:
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Docker Compose                     │
-├─────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │  PostgreSQL │  │   Ollama    │  │   Backend   │  │
-│  │   :5432     │  │   :11434    │  │   :8000     │  │
-│  │             │  │             │  │             │  │
-│  │  Database   │  │  LLM/Embed  │  │ FastAPI +   │  │
-│  │  Storage    │  │   Models    │  │ Static UI   │  │
-│  └─────────────┘  └─────────────┘  └─────────────┘  │
-└─────────────────────────────────────────────────────┘
+```env
+APP_MODEL_PROVIDER=ollama
+APP_OLLAMA_BASE_URL=http://host.docker.internal:11434
+APP_OLLAMA_LLM_MODEL=qwen2.5:3b
+APP_OLLAMA_EMBED_MODEL=nomic-embed-text
 ```
 
-### Rebuilding After Changes
+Finomhangolt provider szétválasztás:
+
+```env
+APP_INDEX_CHAT_PROVIDER=ollama
+APP_INDEX_EMBED_PROVIDER=ollama
+APP_QUERY_CHAT_PROVIDER=ollama
+APP_QUERY_EMBED_PROVIDER=ollama
+```
+
+Gemini példa:
+
+```env
+APP_INDEX_CHAT_PROVIDER=gemini
+APP_INDEX_EMBED_PROVIDER=gemini
+APP_QUERY_CHAT_PROVIDER=gemini
+APP_QUERY_EMBED_PROVIDER=gemini
+APP_GEMINI_API_KEY=your-key
+APP_GEMINI_LLM_MODEL=gemini-2.5-flash-lite
+APP_GEMINI_EMBED_MODEL=gemini-embedding-001
+```
+
+OpenRouter chat Ollama embeddinggel:
+
+```env
+APP_INDEX_CHAT_PROVIDER=openrouter
+APP_INDEX_EMBED_PROVIDER=ollama
+APP_QUERY_CHAT_PROVIDER=openrouter
+APP_QUERY_EMBED_PROVIDER=ollama
+APP_OPENROUTER_API_KEY=your-key
+APP_OPENROUTER_LLM_MODEL=openai/gpt-4.1-mini
+```
+
+Fontos: a lekérdezési embedding providernek és modellnek egyeznie kell az indexeléskor használt embedding providerrel és modellel. Ha eltérnek, az entitás-visszakeresés pontatlan lehet, és a `/api/graph/diagnostics` figyelmeztetést ad.
+
+GraphRAG indexelési beállítások:
+
+```env
+APP_GRAPHRAG_CONCURRENT_REQUESTS=1
+APP_GRAPHRAG_MAX_RETRIES=8
+APP_GRAPHRAG_MAX_RETRY_WAIT=60.0
+APP_GRAPHRAG_INDEX_TIMEOUT_SECONDS=7200
+APP_GRAPHRAG_REQUEST_TIMEOUT=600.0
+APP_GRAPHRAG_CHUNK_SIZE=1000
+APP_GRAPHRAG_CHUNK_OVERLAP=150
+APP_GRAPHRAG_CLAIM_EXTRACTION_ENABLED=false
+```
+
+Részletes provider- és query-mode javaslatok: [docs/graphrag-optimization.md](docs/graphrag-optimization.md).
+
+## Használat
+
+1. Nyisd meg az alkalmazást: http://localhost:8000
+2. Hozz létre vagy válassz ki egy beszélgetést.
+3. Tölts fel egy `.txt` fájlt az `Upload Document` gombbal.
+4. Várd meg az indexelés végét.
+5. Kérdezz a dokumentum tartalmáról.
+6. Nyisd meg a `Graph view` nézetet a tudásgráf bejárásához.
+
+A feltöltés csak `.txt` fájlokat fogad, legfeljebb 10 MB méretig. A GraphRAG indexelés hosszú ideig is futhat, különösen lokális modellekkel vagy nagy dokumentumokkal.
+
+## Keresési módok
+
+- `Auto`: egyszerű routing alapján választ módot.
+- `Local`: konkrét entitásokra, tényekre és dokumentumrészletekre jó.
+- `Global`: teljes korpuszra vonatkozó összefoglalókhoz, témákhoz és mintázatokhoz jó.
+- `DRIFT`: több entitást, kapcsolatot, ok-okozatot vagy összehasonlítást érintő kérdésekhez jó.
+
+A chat válasza eltárolja a ténylegesen használt módot és a routing indoklását is.
+
+## API végpontok
+
+Chat:
+
+- `POST /api/chat/conversations`
+- `GET /api/chat/conversations`
+- `GET /api/chat/conversations/{conversation_id}/messages`
+- `POST /api/chat/conversations/{conversation_id}/query`
+- `DELETE /api/chat/conversations/{conversation_id}`
+
+Indexelés:
+
+- `POST /api/index/upload`
+- `GET /api/index/progress/{document_id}`
+- `GET /api/index/status`
+
+Gráf:
+
+- `GET /api/graph/full`
+- `GET /api/graph/stats`
+- `GET /api/graph/diagnostics`
+
+Példa kérdezés API-ból:
 
 ```bash
-# Rebuild backend (includes frontend build)
-docker compose up -d --build backend
-
-# Rebuild everything
-docker compose up -d --build
-
-# View logs
-docker compose logs -f backend
+curl -X POST "http://localhost:8000/api/chat/conversations/{conversation_id}/query" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Give me an overview of the document","search_mode":"auto"}'
 ```
 
-### Production Considerations
-
-For production deployments:
-
-- Set `APP_DEBUG=false` in your `.env` file
-- Use strong passwords for `APP_PG_PASSWORD`
-- Consider using a reverse proxy (nginx/traefik) for SSL termination
-- Mount persistent volumes for data durability
-
-## 📊 Project Structure
-
-```
-MythologyGraphRAG/
-├── .env.example              # Environment variables template
-├── .gitignore                # Git ignore rules
-├── docker-compose.yml        # Docker services orchestration
-├── README.md                 # Project documentation
-│
-├── backend/
-│   ├── .env.example          # Backend environment template (local dev)
-│   ├── .dockerignore         # Docker build ignore rules
-│   ├── .python-version       # Python version specification (3.12)
-│   ├── Dockerfile            # Multi-stage Docker build
-│   ├── pyproject.toml        # Python dependencies (uv)
-│   ├── uv.lock               # Locked dependencies
-│   │
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py           # FastAPI application entry point
-│   │   ├── config.py         # Pydantic settings configuration
-│   │   ├── database.py       # SQLAlchemy async database setup
-│   │   ├── api/              # API route handlers
-│   │   │   ├── chat.py       # Chat & conversation endpoints
-│   │   │   ├── graph.py      # Graph visualization endpoints
-│   │   │   └── index.py      # Document upload & indexing
-│   │   ├── schemas/          # Pydantic request/response models
-│   │   │   ├── chat.py
-│   │   │   ├── graph.py
-│   │   │   └── index.py
-│   │   └── services/         # Business logic layer
-│   │       ├── chat.py       # Conversation & query processing
-│   │       └── graphrag.py   # GraphRAG indexing & search
-│   │
-│   ├── scripts/
-│   │   ├── init_db.py        # Database tables initialization
-│   │   └── init_graphrag.py  # GraphRAG workspace setup
-│   │
-│   ├── ragtest/              # GraphRAG workspace (gitignored content)
-│   │   ├── settings.yaml     # GraphRAG configuration
-│   │   ├── input/            # Source documents for indexing
-│   │   ├── output/           # Generated parquet files & LanceDB
-│   │   └── cache/            # LLM response cache
-│   │
-│   └── logs/                 # Application logs (gitignored)
-│
-├── frontend/
-│   ├── index.html            # HTML entry point
-│   ├── package.json          # NPM dependencies
-│   ├── vite.config.ts        # Vite build configuration
-│   ├── tailwind.config.js    # TailwindCSS configuration
-│   ├── tsconfig.json         # TypeScript configuration
-│   │
-│   └── src/
-│       ├── main.tsx          # React entry point
-│       ├── App.tsx           # Root component
-│       ├── app/              # Application shell & routing
-│       │   ├── index.tsx
-│       │   └── router.tsx
-│       ├── pages/            # Page-level components
-│       │   └── chat/         # Main chat page
-│       ├── widgets/          # Complex composite components
-│       │   ├── chat-interface/
-│       │   ├── graph-visualization/
-│       │   └── node-details/
-│       ├── features/         # Feature-specific logic
-│       │   ├── send-message/
-│       │   └── upload-document/
-│       ├── entities/         # Domain models & API
-│       │   ├── conversation/
-│       │   ├── graph-node/
-│       │   └── message/
-│       └── shared/           # Shared utilities & UI components
-│           ├── api/          # Axios client & endpoints
-│           ├── config/       # Constants & configuration
-│           ├── lib/          # Utility functions
-│           └── ui/           # Reusable UI components
-│
-└── docs/                     # Documentation assets
-    └── graphrag-preview.png  # Screenshot for README
-```
-
-## 🔧 Configuration
-
-### Model Providers
-
-This project supports two model providers:
-
-| Provider   | Pros                                    | Cons                                 |
-| ---------- | --------------------------------------- | ------------------------------------ |
-| **Ollama** | 100% local, no API costs, data privacy  | Slower, requires more RAM            |
-| **Gemini** | Fast, high quality, free tier available | Requires API key, data sent to cloud |
-
-### Environment Variables
-
-| Variable                 | Description                           | Default               |
-| ------------------------ | ------------------------------------- | --------------------- |
-| `APP_MODEL_PROVIDER`     | Model provider (`ollama` or `gemini`) | `ollama`              |
-| `APP_OLLAMA_LLM_MODEL`   | Ollama chat model                     | `qwen2.5:3b`          |
-| `APP_OLLAMA_EMBED_MODEL` | Ollama embedding model                | `nomic-embed-text`    |
-| `APP_GEMINI_API_KEY`     | Google Gemini API key                 | -                     |
-| `APP_PG_USER`            | PostgreSQL username                   | `mythuser`            |
-| `APP_PG_PASSWORD`        | PostgreSQL password                   | `mythpass123`         |
-| `APP_PG_DATABASE`        | PostgreSQL database name              | `mythology_db`        |
-| `APP_OLLAMA_BASE_URL`    | Ollama server URL                     | `http://host.docker.internal:11434` |
-| `APP_GEMINI_LLM_MODEL`   | Gemini LLM model name                 | -                     |
-| `APP_GEMINI_EMBED_MODEL` | Gemini embedding model name           | -                     |
-| `APP_PG_PORT`            | PostgreSQL port                       | `5432`                |
-| `APP_DEBUG`              | Enable debug mode                     | `true`                |
-
-
-## 🐛 Troubleshooting
-
-### Ollama Models Not Loading
+Példa dokumentumfeltöltés:
 
 ```bash
-# Check if models are downloaded in native Ollama
-ollama list
-
-# Manually pull models if needed
-ollama pull qwen2.5:3b
-ollama pull nomic-embed-text
+curl -X POST "http://localhost:8000/api/index/upload" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@./example.txt"
 ```
 
-### Database Connection Issues
+## Újraindexelés
+
+Indexeld újra a dokumentumokat, ha ezek bármelyike változik:
+
+- embedding provider vagy embedding modell
+- chunk size vagy chunk overlap
+- entitástípusok
+- GraphRAG extraction beállítások
+- community report beállítások
+- cluster graph beállítások
+
+Csak a query chat provider változtatása általában nem igényel újraindexelést.
+
+Egyszerű reset fejlesztés közben:
 
 ```bash
-# Restart PostgreSQL
-docker compose restart postgres
-
-# Check logs
-docker compose logs postgres
-```
-
-### GraphRAG Indexing Fails
-
-```bash
-# Check backend logs
-docker compose logs backend
-
-# Verify Ollama is accessible from the backend container
-docker compose exec backend python -c "import httpx; print(httpx.get('http://host.docker.internal:11434/api/tags').json())"
-```
-
-## 🔄 Stopping and Cleanup
-
-```bash
-# Stop all services
 docker compose down
+docker compose up -d --build
+```
 
-# Stop and remove volumes (WARNING: deletes all data)
+Docker volume reset:
+
+```bash
 docker compose down -v
 ```
 
-## 📺 YouTube Tutorial Series
+Ez törli a PostgreSQL és az Ollama Docker volume-okat. A hostról bind mountolt GraphRAG workspace (`backend/ragtest`) ettől még megmaradhat, ezért fejlesztés közbeni teljes újraindexelésnél ellenőrizd külön a `backend/ragtest/input` és `backend/ragtest/output` tartalmát.
 
-This project is featured in a YouTube tutorial covering GraphRAG development:
+## Tesztek és ellenőrzés
 
-🔗 [YouTube Tutorial](https://www.youtube.com/watch?v=0kVT1B1yrMc)
+Backend tesztek:
 
-[![https://www.youtube.com/@DevItWithMe](https://img.youtube.com/vi/0kVT1B1yrMc/0.jpg)](https://youtu.be/0kVT1B1yrMc)
+```bash
+cd backend
+uv run pytest
+```
 
-🔔 Subscribe to [@DevItWithMe](https://www.youtube.com/@DevItWithMe) for more!
+Frontend build:
 
-## 🤝 Support & Contribution
+```bash
+cd frontend
+npm run build
+```
 
-🙏 If you find this project helpful, consider [Buying Me a Coffee](https://buymeacoffee.com/dev.it)
+Backend lint:
 
-⭐ Star this repository if it helps you learn GraphRAG development!
+```bash
+cd backend
+uv run ruff check .
+```
 
-🐛 Found a bug? [Open an issue](https://github.com/dev-it-with-me/MythologyGraphRAG/issues)
+Frontend lint:
 
-💬 Have questions? [Start a discussion](https://github.com/dev-it-with-me/MythologyGraphRAG/discussions)
+```bash
+cd frontend
+npm run lint
+```
 
-## 📖 Learn More
+## Hibakeresés
 
-- [Microsoft GraphRAG](https://github.com/microsoft/graphrag)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Ollama Documentation](https://ollama.ai/)
-- [React Flow](https://reactflow.dev/)
+Ollama elérés ellenőrzése host gépen:
+
+```bash
+ollama list
+curl http://localhost:11434/api/tags
+```
+
+Ollama elérés ellenőrzése backend konténerből:
+
+```bash
+docker compose exec backend python -c "import httpx; print(httpx.get('http://host.docker.internal:11434/api/tags').json())"
+```
+
+Backend logok:
+
+```bash
+docker compose logs -f backend
+```
+
+PostgreSQL logok:
+
+```bash
+docker compose logs -f postgres
+```
+
+GraphRAG output és indexelési napló:
+
+```text
+backend/ragtest/output/
+backend/ragtest/output/indexing-engine.log
+```
+
+Ha az indexelés túl lassú vagy timeoutol, csökkentsd az `APP_GRAPHRAG_CHUNK_SIZE` értékét, növeld az `APP_GRAPHRAG_REQUEST_TIMEOUT` értékét, vagy használj gyorsabb cloud providert indexeléshez.
+
+## Dokumentum-előkészítési javaslatok
+
+- Használj tiszta, UTF-8 kódolású `.txt` fájlokat.
+- Távolítsd el az ismétlődő fejléceket, lábléceket és zajos boilerplate részeket.
+- Egy fájl egy jól körülhatárolt témát vagy forrásegységet tartalmazzon.
+- Nagy korpuszt több kisebb, koherens fájlra érdemes bontani.
+- Provider vagy embedding modell váltás után töltsd fel újra a forrásokat.

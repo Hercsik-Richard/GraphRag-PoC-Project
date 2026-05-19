@@ -11,7 +11,7 @@ from graphrag.query.context_builder.conversation_history import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.graphrag import GraphRAGError, graphrag_service
+from app.services.graphrag import GraphRAGError, SearchMode, graphrag_service
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,8 @@ async def get_messages_by_conversation(
     """
     query = text("""
         SELECT id, conversation_id, role, content, created_at,
-               retrieved_entities, retrieved_relationships
+               retrieved_entities, retrieved_relationships,
+               search_mode_used, search_mode_reason
         FROM messages
         WHERE conversation_id = :conversation_id
         ORDER BY created_at ASC
@@ -193,6 +194,8 @@ async def get_messages_by_conversation(
             "created_at": row[4],
             "retrieved_entities": row[5],
             "retrieved_relationships": row[6],
+            "search_mode_used": row[7],
+            "search_mode_reason": row[8],
         }
         for row in rows
     ]
@@ -205,6 +208,8 @@ async def save_message(
     content: str,
     retrieved_entities: list[dict[str, Any]] | None = None,
     retrieved_relationships: list[dict[str, Any]] | None = None,
+    search_mode_used: str | None = None,
+    search_mode_reason: str | None = None,
 ) -> dict[str, Any]:
     """
     Save a message to the database.
@@ -226,14 +231,17 @@ async def save_message(
     query = text("""
         INSERT INTO messages (
             id, conversation_id, role, content, created_at,
-            retrieved_entities, retrieved_relationships
+            retrieved_entities, retrieved_relationships,
+            search_mode_used, search_mode_reason
         )
         VALUES (
             :id, :conversation_id, :role, :content, :created_at,
-            CAST(:retrieved_entities AS json), CAST(:retrieved_relationships AS json)
+            CAST(:retrieved_entities AS json), CAST(:retrieved_relationships AS json),
+            :search_mode_used, :search_mode_reason
         )
         RETURNING id, conversation_id, role, content, created_at,
-                  retrieved_entities, retrieved_relationships
+                  retrieved_entities, retrieved_relationships,
+                  search_mode_used, search_mode_reason
     """)
 
     # Convert lists to JSON strings for PostgreSQL
@@ -252,6 +260,8 @@ async def save_message(
             "created_at": now,
             "retrieved_entities": entities_json,
             "retrieved_relationships": relationships_json,
+            "search_mode_used": search_mode_used,
+            "search_mode_reason": search_mode_reason,
         },
     )
 
@@ -270,10 +280,17 @@ async def save_message(
         "created_at": row[4],
         "retrieved_entities": row[5],
         "retrieved_relationships": row[6],
+        "search_mode_used": row[7],
+        "search_mode_reason": row[8],
     }
 
 
-async def process_query(db: AsyncSession, conversation_id: UUID, question: str) -> dict[str, Any]:
+async def process_query(
+    db: AsyncSession,
+    conversation_id: UUID,
+    question: str,
+    search_mode: SearchMode = "auto",
+) -> dict[str, Any]:
     """
     Process a user query with GraphRAG and save messages.
 
@@ -300,6 +317,7 @@ async def process_query(db: AsyncSession, conversation_id: UUID, question: str) 
         # 1. Save user message
         logger.info(f"Processing query for conversation {conversation_id}")
         await save_message(db, conversation_id, "user", question)
+        await db.commit()
 
         # 2. Retrieve conversation history (limit to last 3 messages for context)
         all_messages = await get_messages_by_conversation(db, conversation_id)
@@ -313,11 +331,13 @@ async def process_query(db: AsyncSession, conversation_id: UUID, question: str) 
 
         # 3. Execute GraphRAG query with history
         logger.info(f"Executing GraphRAG query: {question[:50]}...")
-        query_result = await graphrag_service.query(question, conversation_history)
+        query_result = await graphrag_service.query(question, conversation_history, search_mode)
 
         answer = query_result.get("answer", "")
         retrieved_entities = query_result.get("retrieved_entities", [])
         retrieved_relationships = query_result.get("retrieved_relationships", [])
+        search_mode_used = query_result.get("search_mode_used", "local")
+        search_mode_reason = query_result.get("search_mode_reason", "")
 
         # 4. Save assistant response with retrieved context
         assistant_message = await save_message(
@@ -327,6 +347,8 @@ async def process_query(db: AsyncSession, conversation_id: UUID, question: str) 
             answer,
             retrieved_entities=retrieved_entities,
             retrieved_relationships=retrieved_relationships,
+            search_mode_used=search_mode_used,
+            search_mode_reason=search_mode_reason,
         )
 
         # 5. Commit transaction
@@ -339,12 +361,41 @@ async def process_query(db: AsyncSession, conversation_id: UUID, question: str) 
                 "entities": retrieved_entities,
                 "relationships": retrieved_relationships,
             },
+            "search_mode_used": search_mode_used,
+            "search_mode_reason": search_mode_reason,
         }
 
     except GraphRAGError as e:
         await db.rollback()
         logger.error(f"GraphRAG error during query processing: {e}")
-        raise QueryProcessingError(f"Failed to process query: {e}") from e
+        search_mode_used, search_mode_reason = graphrag_service.route_search_mode(
+            question,
+            search_mode,
+        )
+        assistant_message = await save_message(
+            db,
+            conversation_id,
+            "assistant",
+            (
+                "A GraphRAG keresés túl sokáig futott vagy hibára futott a lokális modellnél. "
+                "Próbáld újra Local módban, vagy válts gyorsabb query chat providerre. "
+                f"Technikai részlet: {e}"
+            ),
+            retrieved_entities=[],
+            retrieved_relationships=[],
+            search_mode_used=search_mode_used,
+            search_mode_reason=search_mode_reason,
+        )
+        await db.commit()
+        return {
+            "message": assistant_message,
+            "retrieved_graph": {
+                "entities": [],
+                "relationships": [],
+            },
+            "search_mode_used": search_mode_used,
+            "search_mode_reason": search_mode_reason,
+        }
     except Exception as e:
         await db.rollback()
         logger.error(f"Unexpected error during query processing: {e}")

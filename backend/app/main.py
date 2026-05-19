@@ -4,6 +4,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import chat as chat_router
 from app.api import graph as graph_router
 from app.api import index as index_router
-from app.config import settings
+from app.config import ModelProvider, settings
 from app.database import check_db_connection, ensure_database_schema
 from app.services.graphrag import graphrag_service
 
@@ -43,11 +44,13 @@ async def lifespan(app: FastAPI):
         app: FastAPI application instance.
     """
     # Startup
-    logger.info("Starting MythologyGraphRAG application...")
+    logger.info("Starting GraphRAG application...")
     logger.info(
         f"Model providers configured - "
-        f"Index: {settings.get_index_provider()}, "
-        f"Query: {settings.get_query_provider()}"
+        f"Index chat: {settings.get_index_chat_provider()}, "
+        f"Index embed: {settings.get_index_embed_provider()}, "
+        f"Query chat: {settings.get_query_chat_provider()}, "
+        f"Query embed: {settings.get_query_embed_provider()}"
     )
 
     # Check database connection
@@ -58,14 +61,22 @@ async def lifespan(app: FastAPI):
         logger.info("Database connection established")
         await ensure_database_schema()
 
-    # Check model provider connection
+    # Check model provider connections
     try:
-        provider_ok = await graphrag_service.check_provider_health()
-        if provider_ok:
-            provider = settings.get_query_provider()
-            logger.info(f"{provider.capitalize()} connection established")
-            models = await graphrag_service.verify_models()
-            logger.info(f"Models available: {models}")
+        provider_checks: list[tuple[str, ModelProvider, Literal["chat", "embedding"]]] = [
+            ("index chat", settings.get_index_chat_provider(), "chat"),
+            ("index embedding", settings.get_index_embed_provider(), "embedding"),
+            ("query chat", settings.get_query_chat_provider(), "chat"),
+            ("query embedding", settings.get_query_embed_provider(), "embedding"),
+        ]
+        for label, provider, model_kind in provider_checks:
+            provider_ok = await graphrag_service.check_provider_health(
+                provider,
+                model_kind=model_kind,
+            )
+            logger.info("%s provider %s status: %s", label, provider, provider_ok)
+        models = await graphrag_service.verify_models()
+        logger.info(f"Models available: {models}")
     except Exception as e:
         logger.warning(f"Model provider connection check failed: {e}")
         logger.warning("GraphRAG features will be unavailable")
@@ -80,8 +91,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="MythologyGraphRAG API",
-    description="Educational GraphRAG application for mythology knowledge graphs",
+    title="GraphRAG API",
+    description="GraphRAG application for document-based knowledge graphs",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -182,18 +193,45 @@ async def health_check():
     """
     db_ok = await check_db_connection()
 
-    provider = settings.get_query_provider()
-    provider_ok = False
-    try:
-        provider_ok = await graphrag_service.check_provider_health()
-    except Exception:
-        pass
+    async def provider_status(
+        provider: ModelProvider,
+        model_kind: Literal["chat", "embedding", "both"],
+    ) -> str:
+        try:
+            ok = await graphrag_service.check_provider_health(provider, model_kind=model_kind)
+            return "connected" if ok else "disconnected"
+        except Exception:
+            return "disconnected"
+
+    provider_checks = {
+        "index_chat": {
+            "provider": settings.get_index_chat_provider(),
+            "model": settings.get_model_name(settings.get_index_chat_provider(), "chat"),
+            "status": await provider_status(settings.get_index_chat_provider(), "chat"),
+        },
+        "index_embedding": {
+            "provider": settings.get_index_embed_provider(),
+            "model": settings.get_model_name(settings.get_index_embed_provider(), "embedding"),
+            "status": await provider_status(settings.get_index_embed_provider(), "embedding"),
+        },
+        "query_chat": {
+            "provider": settings.get_query_chat_provider(),
+            "model": settings.get_model_name(settings.get_query_chat_provider(), "chat"),
+            "status": await provider_status(settings.get_query_chat_provider(), "chat"),
+        },
+        "query_embedding": {
+            "provider": settings.get_query_embed_provider(),
+            "model": settings.get_model_name(settings.get_query_embed_provider(), "embedding"),
+            "status": await provider_status(settings.get_query_embed_provider(), "embedding"),
+        },
+    }
+    providers_ok = all(item["status"] == "connected" for item in provider_checks.values())
 
     return {
-        "status": "healthy" if (db_ok and provider_ok) else "degraded",
+        "status": "healthy" if (db_ok and providers_ok) else "degraded",
         "database": "connected" if db_ok else "disconnected",
-        "model_provider": provider,
-        "model_provider_status": "connected" if provider_ok else "disconnected",
+        "providers": provider_checks,
+        "embedding_matches_index": settings.embedding_config_matches_index(),
     }
 
 

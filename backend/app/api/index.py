@@ -22,6 +22,7 @@ from app.services.graphrag import (
     GraphRAGError,
     IndexingError,
     OllamaConnectionError,
+    OpenRouterConfigurationError,
     graphrag_service,
 )
 
@@ -156,14 +157,19 @@ async def run_indexing_job(document_id: UUID, filename: str, content: bytes) -> 
                     current_chunk_progress=current_chunk_progress,
                 )
 
-            index_provider = settings.get_index_provider()
+            index_provider = settings.get_index_chat_provider()
+            index_embed_provider = settings.get_index_embed_provider()
             update_index_job(
                 document_id,
                 status="indexing",
                 progress=5,
-                message=f"Checking {index_provider} availability",
+                message=f"Checking {index_provider} chat and {index_embed_provider} embedding availability",
             )
-            await graphrag_service.check_provider_health(index_provider)
+            await graphrag_service.check_provider_health(index_provider, model_kind="chat")
+            await graphrag_service.check_provider_health(
+                index_embed_provider,
+                model_kind="embedding",
+            )
 
             stats = await graphrag_service.index_document(
                 filename,
@@ -285,6 +291,12 @@ async def upload_document(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Gemini API is not configured. Please set APP_GEMINI_API_KEY.",
+        ) from e
+    except OpenRouterConfigurationError as e:
+        logger.error(f"OpenRouter configuration error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"OpenRouter API is not configured or selected model is unavailable: {e}",
         ) from e
     except IndexingError as e:
         logger.error(f"Indexing failed: {e}")

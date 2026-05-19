@@ -20,6 +20,7 @@ export const API_ENDPOINTS = {
   GRAPH: {
     FULL: '/api/graph/full',
     STATS: '/api/graph/stats',
+    DIAGNOSTICS: '/api/graph/diagnostics',
   },
   // Index endpoints
   INDEX: {

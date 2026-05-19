@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { MessageCircle } from "lucide-react";
 import { useConversation } from "@/entities/conversation";
+import type { Message, SearchMode } from "@/entities/message";
 import { MessageBubble } from "@/entities/message";
 import { MessageForm, useSendMessage } from "@/features/send-message";
 
@@ -31,13 +32,21 @@ export function ChatInterface({
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isSending]);
 
-  const handleSendMessage = async (content: string) => {
+  const pendingMessage: Message = {
+    id: "pending-assistant-response",
+    conversation_id: conversationId ?? "",
+    role: "assistant",
+    content: "Working on the answer...",
+    created_at: new Date().toISOString(),
+  };
+
+  const handleSendMessage = async (content: string, searchMode: SearchMode) => {
     if (!conversationId) return;
 
     try {
-      await sendMessage({ question: content });
+      await sendMessage({ question: content, search_mode: searchMode });
       await mutate(); // Refresh messages after the backend saved the answer
       onMessageSent?.();
     } catch (error) {
@@ -85,6 +94,12 @@ export function ChatInterface({
                     onRelationshipClick={onRelationshipClick}
                   />
                 ))}
+                {isSending && <MessageBubble message={pendingMessage} />}
+                <div ref={messagesEndRef} />
+              </>
+            ) : isSending ? (
+              <>
+                <MessageBubble message={pendingMessage} />
                 <div ref={messagesEndRef} />
               </>
             ) : (

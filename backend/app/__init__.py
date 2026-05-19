@@ -1,1 +1,1 @@
-"""MythologyGraphRAG backend application."""
+"""GraphRAG backend application."""

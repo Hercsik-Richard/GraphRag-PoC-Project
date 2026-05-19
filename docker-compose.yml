@@ -2,22 +2,22 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:17-alpine
-    container_name: mythology-postgres
+    container_name: graphrag-postgres
     environment:
-      POSTGRES_USER: ${APP_PG_USER:-mythuser}
-      POSTGRES_PASSWORD: ${APP_PG_PASSWORD:-mythpass123}
-      POSTGRES_DB: ${APP_PG_DATABASE:-mythology_db}
+      POSTGRES_USER: ${APP_PG_USER:-graphrag_user}
+      POSTGRES_PASSWORD: ${APP_PG_PASSWORD:-graphrag_pass123}
+      POSTGRES_DB: ${APP_PG_DATABASE:-graphrag_db}
     ports:
       - "${APP_PG_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${APP_PG_USER:-mythuser} -d ${APP_PG_DATABASE:-mythology_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${APP_PG_USER:-graphrag_user} -d ${APP_PG_DATABASE:-graphrag_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - mythology-network
+      - graphrag-network
 
   # Optional Ollama service.
   #
@@ -27,7 +27,7 @@ services:
   # to the native host service via host.docker.internal.
   ollama:
     image: ollama/ollama:latest
-    container_name: mythology-ollama
+    container_name: graphrag-ollama
     profiles:
       - container-ollama
     ports:
@@ -47,19 +47,23 @@ services:
       ]
     restart: unless-stopped
     networks:
-      - mythology-network
+      - graphrag-network
 
   # Backend Application
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: mythology-backend
+    container_name: graphrag-backend
     environment:
-      - APP_DATABASE_URL=postgresql://${APP_PG_USER:-mythuser}:${APP_PG_PASSWORD:-mythpass123}@postgres:5432/${APP_PG_DATABASE:-mythology_db}
+      - APP_DATABASE_URL=postgresql://${APP_PG_USER:-graphrag_user}:${APP_PG_PASSWORD:-graphrag_pass123}@postgres:5432/${APP_PG_DATABASE:-graphrag_db}
       # Model provider configuration
       - APP_MODEL_PROVIDER=${APP_MODEL_PROVIDER:-ollama}
       - APP_INDEX_MODEL_PROVIDER=${APP_INDEX_MODEL_PROVIDER:-}
+      - APP_INDEX_CHAT_PROVIDER=${APP_INDEX_CHAT_PROVIDER:-}
+      - APP_INDEX_EMBED_PROVIDER=${APP_INDEX_EMBED_PROVIDER:-}
+      - APP_QUERY_CHAT_PROVIDER=${APP_QUERY_CHAT_PROVIDER:-}
+      - APP_QUERY_EMBED_PROVIDER=${APP_QUERY_EMBED_PROVIDER:-}
       # Ollama configuration
       - APP_OLLAMA_BASE_URL=${APP_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - APP_OLLAMA_LLM_MODEL=${APP_OLLAMA_LLM_MODEL:-qwen2.5:3b}
@@ -68,14 +72,20 @@ services:
       - APP_GEMINI_API_KEY=${APP_GEMINI_API_KEY:-}
       - APP_GEMINI_LLM_MODEL=${APP_GEMINI_LLM_MODEL:-gemini-2.5-flash-lite}
       - APP_GEMINI_EMBED_MODEL=${APP_GEMINI_EMBED_MODEL:-gemini-embedding-001}
+      # OpenRouter configuration (only required when an OpenRouter provider is selected)
+      - APP_OPENROUTER_API_KEY=${APP_OPENROUTER_API_KEY:-}
+      - APP_OPENROUTER_LLM_MODEL=${APP_OPENROUTER_LLM_MODEL:-openai/gpt-4.1-mini}
+      - APP_OPENROUTER_EMBED_MODEL=${APP_OPENROUTER_EMBED_MODEL:-}
+      - APP_OPENROUTER_API_BASE=${APP_OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
       # GraphRAG indexing controls
       - APP_GRAPHRAG_CONCURRENT_REQUESTS=${APP_GRAPHRAG_CONCURRENT_REQUESTS:-1}
       - APP_GRAPHRAG_MAX_RETRIES=${APP_GRAPHRAG_MAX_RETRIES:-8}
       - APP_GRAPHRAG_MAX_RETRY_WAIT=${APP_GRAPHRAG_MAX_RETRY_WAIT:-60.0}
       - APP_GRAPHRAG_INDEX_TIMEOUT_SECONDS=${APP_GRAPHRAG_INDEX_TIMEOUT_SECONDS:-7200}
       - APP_GRAPHRAG_REQUEST_TIMEOUT=${APP_GRAPHRAG_REQUEST_TIMEOUT:-600.0}
-      - APP_GRAPHRAG_CHUNK_SIZE=${APP_GRAPHRAG_CHUNK_SIZE:-1600}
-      - APP_GRAPHRAG_CHUNK_OVERLAP=${APP_GRAPHRAG_CHUNK_OVERLAP:-100}
+      - APP_GRAPHRAG_QUERY_TIMEOUT_SECONDS=${APP_GRAPHRAG_QUERY_TIMEOUT_SECONDS:-240}
+      - APP_GRAPHRAG_CHUNK_SIZE=${APP_GRAPHRAG_CHUNK_SIZE:-1000}
+      - APP_GRAPHRAG_CHUNK_OVERLAP=${APP_GRAPHRAG_CHUNK_OVERLAP:-150}
       - APP_GRAPHRAG_CLAIM_EXTRACTION_ENABLED=${APP_GRAPHRAG_CLAIM_EXTRACTION_ENABLED:-false}
       # Other settings
       - APP_GRAPHRAG_ROOT=/app/ragtest
@@ -93,7 +103,7 @@ services:
     depends_on:
       - postgres
     networks:
-      - mythology-network
+      - graphrag-network
     restart: unless-stopped
 
 volumes:
@@ -105,5 +115,5 @@ volumes:
     driver: local
 
 networks:
-  mythology-network:
+  graphrag-network:
     driver: bridge

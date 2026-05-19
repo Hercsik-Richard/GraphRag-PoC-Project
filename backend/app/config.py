@@ -1,10 +1,13 @@
 """Application configuration using Pydantic Settings."""
 
 import json
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+ModelProvider = Literal["ollama", "gemini", "openrouter"]
 
 
 class Settings(BaseSettings):
@@ -12,10 +15,14 @@ class Settings(BaseSettings):
 
     database_url: PostgresDsn
 
-    # Model provider configuration
-    # "ollama" for local inference, "gemini" for Google Gemini API
-    # Same provider is used for both indexing and querying to ensure embedding compatibility
-    model_provider: Literal["ollama", "gemini"] = "ollama"
+    # Model provider configuration. The split provider fields are preferred; model_provider and
+    # index_model_provider are accepted as backward-compatible defaults.
+    model_provider: ModelProvider | None = None
+    index_model_provider: ModelProvider | None = None
+    index_chat_provider: ModelProvider | None = None
+    index_embed_provider: ModelProvider | None = None
+    query_chat_provider: ModelProvider | None = None
+    query_embed_provider: ModelProvider | None = None
 
     # Ollama configuration (required when model_provider is "ollama")
     ollama_base_url: str | None = None
@@ -27,6 +34,13 @@ class Settings(BaseSettings):
     gemini_llm_model: str = "gemini-2.5-flash-lite"
     gemini_embed_model: str = "gemini-embedding-001"
 
+    # OpenRouter configuration. Embeddings require a model that OpenRouter exposes through
+    # /embeddings; otherwise use Ollama or Gemini for embeddings.
+    openrouter_api_key: str | None = None
+    openrouter_llm_model: str = "openai/gpt-4.1-mini"
+    openrouter_embed_model: str = ""
+    openrouter_api_base: str = "https://openrouter.ai/api/v1"
+
     # GraphRAG indexing controls. Gemini indexing is many sequential LLM calls, so
     # these defaults favor reliability over speed.
     graphrag_concurrent_requests: int = 1
@@ -34,8 +48,9 @@ class Settings(BaseSettings):
     graphrag_max_retry_wait: float = 60.0
     graphrag_index_timeout_seconds: int = 7200
     graphrag_request_timeout: float = 600.0
-    graphrag_chunk_size: int = 1600
-    graphrag_chunk_overlap: int = 100
+    graphrag_query_timeout_seconds: int = 240
+    graphrag_chunk_size: int = 1000
+    graphrag_chunk_overlap: int = 150
     graphrag_claim_extraction_enabled: bool = False
 
     graphrag_root: str
@@ -57,28 +72,102 @@ class Settings(BaseSettings):
             return json.loads(v)
         return v
 
+    @field_validator(
+        "model_provider",
+        "index_model_provider",
+        "index_chat_provider",
+        "index_embed_provider",
+        "query_chat_provider",
+        "query_embed_provider",
+        mode="before",
+    )
+    @classmethod
+    def parse_optional_provider(cls, v: Any) -> Any:
+        """Treat empty provider env vars from docker compose as unset."""
+        if v == "":
+            return None
+        return v
+
     @model_validator(mode="after")
     def validate_provider_configuration(self) -> "Settings":
         """Validate that required settings are present for the configured provider."""
+        default_provider = self.model_provider or "ollama"
+        self.index_chat_provider = self.index_chat_provider or self.index_model_provider or default_provider
+        self.index_embed_provider = self.index_embed_provider or self.index_model_provider or default_provider
+        self.query_chat_provider = self.query_chat_provider or default_provider
+        self.query_embed_provider = self.query_embed_provider or self.index_embed_provider
+
+        configured_providers = {
+            self.index_chat_provider,
+            self.index_embed_provider,
+            self.query_chat_provider,
+            self.query_embed_provider,
+        }
+
         # Validate Ollama configuration
-        if self.model_provider == "ollama":
+        if "ollama" in configured_providers:
             if not self.ollama_base_url:
-                raise ValueError("APP_OLLAMA_BASE_URL is required when model_provider is 'ollama'")
+                raise ValueError("APP_OLLAMA_BASE_URL is required when any provider is 'ollama'")
 
         # Validate Gemini configuration
-        if self.model_provider == "gemini":
+        if "gemini" in configured_providers:
             if not self.gemini_api_key:
-                raise ValueError("APP_GEMINI_API_KEY is required when model_provider is 'gemini'")
+                raise ValueError("APP_GEMINI_API_KEY is required when any provider is 'gemini'")
+
+        # Validate OpenRouter configuration
+        if "openrouter" in configured_providers:
+            if not self.openrouter_api_key:
+                raise ValueError(
+                    "APP_OPENROUTER_API_KEY is required when any provider is 'openrouter'"
+                )
+            if "openrouter" in {self.index_chat_provider, self.query_chat_provider}:
+                if not self.openrouter_llm_model:
+                    raise ValueError("APP_OPENROUTER_LLM_MODEL is required for OpenRouter chat")
+            if "openrouter" in {self.index_embed_provider, self.query_embed_provider}:
+                if not self.openrouter_embed_model:
+                    raise ValueError("APP_OPENROUTER_EMBED_MODEL is required for OpenRouter embeddings")
 
         return self
 
-    def get_index_provider(self) -> Literal["ollama", "gemini"]:
-        """Get the provider to use for indexing."""
-        return self.model_provider
+    def get_index_provider(self) -> ModelProvider:
+        """Get the chat provider to use for indexing."""
+        return self.get_index_chat_provider()
 
-    def get_query_provider(self) -> Literal["ollama", "gemini"]:
-        """Get the provider to use for querying."""
-        return self.model_provider
+    def get_query_provider(self) -> ModelProvider:
+        """Get the chat provider to use for querying."""
+        return self.get_query_chat_provider()
+
+    def get_index_chat_provider(self) -> ModelProvider:
+        """Get the chat provider to use for indexing."""
+        return cast(ModelProvider, self.index_chat_provider)
+
+    def get_index_embed_provider(self) -> ModelProvider:
+        """Get the embedding provider to use for indexing."""
+        return cast(ModelProvider, self.index_embed_provider)
+
+    def get_query_chat_provider(self) -> ModelProvider:
+        """Get the chat provider to use for querying."""
+        return cast(ModelProvider, self.query_chat_provider)
+
+    def get_query_embed_provider(self) -> ModelProvider:
+        """Get the embedding provider to use for querying."""
+        return cast(ModelProvider, self.query_embed_provider)
+
+    def get_model_name(self, provider: ModelProvider, model_kind: Literal["chat", "embedding"]) -> str:
+        """Return the configured model name for a provider and model kind."""
+        if provider == "ollama":
+            return self.ollama_llm_model if model_kind == "chat" else self.ollama_embed_model
+        if provider == "gemini":
+            return self.gemini_llm_model if model_kind == "chat" else self.gemini_embed_model
+        return self.openrouter_llm_model if model_kind == "chat" else self.openrouter_embed_model
+
+    def embedding_config_matches_index(self) -> bool:
+        """Return whether query embeddings match the embedding model used for indexing."""
+        return (
+            self.get_query_embed_provider() == self.get_index_embed_provider()
+            and self.get_model_name(self.get_query_embed_provider(), "embedding")
+            == self.get_model_name(self.get_index_embed_provider(), "embedding")
+        )
 
 
 settings = Settings()  # type: ignore
