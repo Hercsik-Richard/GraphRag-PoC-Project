@@ -1,12 +1,12 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios';
-import { API_BASE_URL } from '@/shared/config/constants';
+import { API_BASE_URL, API_REQUEST_TIMEOUT } from '@/shared/config/constants';
 
 /**
  * Axios instance configured for API communication
  */
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60000, // 60 seconds
+  timeout: API_REQUEST_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
   },

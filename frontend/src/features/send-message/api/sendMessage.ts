@@ -3,7 +3,7 @@
  */
 import useSWRMutation from 'swr/mutation';
 import { apiClient } from '@/shared/api/client';
-import { API_ENDPOINTS } from '@/shared/config/constants';
+import { API_ENDPOINTS, CHAT_REQUEST_TIMEOUT } from '@/shared/config/constants';
 import type { QueryRequest, QueryResponse } from '@/entities/message';
 
 /**
@@ -13,7 +13,9 @@ export function useSendMessage(conversationId: string | null) {
   const { trigger, isMutating, error } = useSWRMutation(
     conversationId ? API_ENDPOINTS.CHAT.QUERY(conversationId) : null,
     async (url: string, { arg }: { arg: QueryRequest }) => {
-      const response = await apiClient.post<QueryResponse>(url, arg);
+      const response = await apiClient.post<QueryResponse>(url, arg, {
+        timeout: CHAT_REQUEST_TIMEOUT,
+      });
       return response.data;
     }
   );

@@ -38,10 +38,14 @@ export function ChatInterface({
 
     try {
       await sendMessage({ question: content });
-      mutate(); // Refresh messages
+      await mutate(); // Refresh messages after the backend saved the answer
       onMessageSent?.();
     } catch (error) {
       console.error("Failed to send message:", error);
+      await mutate();
+      window.setTimeout(() => {
+        void mutate();
+      }, 5000);
     }
   };
 

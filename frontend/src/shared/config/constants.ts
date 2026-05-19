@@ -3,7 +3,9 @@
  */
 
 // API Configuration
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+export const API_REQUEST_TIMEOUT = 60000;
+export const CHAT_REQUEST_TIMEOUT = 900000;
 
 // API Endpoints
 export const API_ENDPOINTS = {
