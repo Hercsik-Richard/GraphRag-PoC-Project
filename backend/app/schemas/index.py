@@ -36,6 +36,10 @@ class IndexProgressSchema(BaseModel):
     total_chunks: int | None = None
     current_chunk: int | None = None
     current_chunk_progress: int | None = Field(default=None, ge=0, le=100)
+    phase: str | None = None
+    phase_processed: int | None = None
+    phase_total: int | None = None
+    phase_progress: int | None = Field(default=None, ge=0, le=100)
     entity_count: int | None = None
     relationship_count: int | None = None
     error: str | None = None

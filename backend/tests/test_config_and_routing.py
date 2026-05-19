@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from app.config import Settings
+from app.config import Settings, chat_temperature_for_model
 from app.services.graphrag import (
+    Gemini3TemperatureGuardChatModel,
     GeminiFreeTierRateLimiter,
     GeminiRateLimitError,
     GraphRAGService,
@@ -195,6 +196,38 @@ def test_gemini_free_tier_guard_defaults_are_conservative() -> None:
     assert settings.gemini_free_tier_index_rpm == 7
     assert settings.gemini_free_tier_index_tpm == 120_000
     assert settings.gemini_free_tier_index_rpd == 500
+
+
+def test_gemini_3_temperature_uses_litellm_safe_default() -> None:
+    assert chat_temperature_for_model("gemini", "gemini-3.1-flash-lite") == 1.0
+    assert chat_temperature_for_model("gemini", "models/gemini-3-pro") == 1.0
+
+
+def test_non_gemini_3_temperature_remains_deterministic() -> None:
+    assert chat_temperature_for_model("gemini", "gemini-2.5-flash-lite") == 0.0
+    assert chat_temperature_for_model("ollama", "qwen2.5:3b") == 0.0
+    assert chat_temperature_for_model("openrouter", "openai/gpt-4.1-mini") == 0.0
+
+
+def test_gemini_3_temperature_guard_overrides_low_temperature() -> None:
+    class DummyChatModel:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, object] = {}
+
+        async def achat(self, *args: object, **kwargs: object) -> str:
+            self.kwargs = kwargs
+            return "ok"
+
+    async def call_guard() -> dict[str, object]:
+        wrapped_model = DummyChatModel()
+        guarded_model = Gemini3TemperatureGuardChatModel(wrapped_model, 1.0)
+        await guarded_model.achat("prompt", temperature=0.0, model_params={"temperature": 0})
+        return wrapped_model.kwargs
+
+    kwargs = asyncio.run(call_guard())
+
+    assert kwargs["temperature"] == 1.0
+    assert kwargs["model_params"] == {"temperature": 1.0}
 
 
 def test_gemini_free_tier_limiter_blocks_after_daily_budget(tmp_path: Path) -> None:

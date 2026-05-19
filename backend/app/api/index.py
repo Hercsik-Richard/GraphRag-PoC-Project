@@ -44,6 +44,10 @@ class IndexJob:
     total_chunks: int | None = None
     current_chunk: int | None = None
     current_chunk_progress: int | None = None
+    phase: str | None = None
+    phase_processed: int | None = None
+    phase_total: int | None = None
+    phase_progress: int | None = None
     entity_count: int | None = None
     relationship_count: int | None = None
     error: str | None = None
@@ -63,6 +67,10 @@ def update_index_job(
     total_chunks: int | None = None,
     current_chunk: int | None = None,
     current_chunk_progress: int | None = None,
+    phase: str | None = None,
+    phase_processed: int | None = None,
+    phase_total: int | None = None,
+    phase_progress: int | None = None,
     entity_count: int | None = None,
     relationship_count: int | None = None,
     error: str | None = None,
@@ -86,6 +94,14 @@ def update_index_job(
         job.current_chunk = current_chunk
     if current_chunk_progress is not None:
         job.current_chunk_progress = max(0, min(current_chunk_progress, 100))
+    if phase is not None:
+        job.phase = phase
+    if phase_processed is not None:
+        job.phase_processed = phase_processed
+    if phase_total is not None:
+        job.phase_total = phase_total
+    if phase_progress is not None:
+        job.phase_progress = max(0, min(phase_progress, 100))
     if entity_count is not None:
         job.entity_count = entity_count
     if relationship_count is not None:
@@ -99,10 +115,12 @@ def update_index_job(
         job.progress,
         job.message,
         (
-            f" ({job.chunks_processed}/{job.total_chunks} chunks, "
-            f"current {job.current_chunk}: {job.current_chunk_progress}%)"
-            if job.chunks_processed is not None and job.total_chunks is not None
-            and job.current_chunk is not None and job.current_chunk_progress is not None
+            f" ({job.phase}: {job.phase_processed}/{job.phase_total}, "
+            f"{job.phase_progress}%)"
+            if job.phase is not None
+            and job.phase_processed is not None
+            and job.phase_total is not None
+            and job.phase_progress is not None
             else ""
         ),
     )
@@ -151,6 +169,10 @@ async def run_indexing_job(
                 total_chunks: int | None = None,
                 current_chunk: int | None = None,
                 current_chunk_progress: int | None = None,
+                phase: str | None = None,
+                phase_processed: int | None = None,
+                phase_total: int | None = None,
+                phase_progress: int | None = None,
             ) -> None:
                 update_index_job(
                     document_id,
@@ -161,6 +183,10 @@ async def run_indexing_job(
                     total_chunks=total_chunks,
                     current_chunk=current_chunk,
                     current_chunk_progress=current_chunk_progress,
+                    phase=phase,
+                    phase_processed=phase_processed,
+                    phase_total=phase_total,
+                    phase_progress=phase_progress,
                 )
 
             index_provider = index_model_provider
@@ -403,6 +429,10 @@ async def get_index_progress(document_id: UUID) -> IndexProgressSchema:
         total_chunks=job.total_chunks,
         current_chunk=job.current_chunk,
         current_chunk_progress=job.current_chunk_progress,
+        phase=job.phase,
+        phase_processed=job.phase_processed,
+        phase_total=job.phase_total,
+        phase_progress=job.phase_progress,
         entity_count=job.entity_count,
         relationship_count=job.relationship_count,
         error=job.error,

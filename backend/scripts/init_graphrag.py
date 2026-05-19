@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.config import settings  # type: ignore
+from app.config import chat_temperature_for_model, settings  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ models:
     api_key: ${GRAPHRAG_CHAT_API_KEY}
     encoding_model: cl100k_base
     max_tokens: 4000
-    temperature: 0
+    temperature: ${GRAPHRAG_CHAT_TEMPERATURE}
     top_p: 1
     request_timeout: ${GRAPHRAG_REQUEST_TIMEOUT}
     max_retries: ${GRAPHRAG_MAX_RETRIES}
@@ -186,6 +186,9 @@ def create_graphrag_workspace() -> None:
     os.environ["GRAPHRAG_CHAT_TOKENS_PER_MINUTE"] = str(chat_tokens_per_minute)
     os.environ["GRAPHRAG_CHAT_MODEL_PROVIDER"] = index_chat_provider
     os.environ["GRAPHRAG_CHAT_MODEL"] = chat_config["model"]
+    os.environ["GRAPHRAG_CHAT_TEMPERATURE"] = str(
+        chat_temperature_for_model(index_chat_provider, chat_config["model"])
+    )
     os.environ["GRAPHRAG_CHAT_API_BASE"] = chat_config["api_base"]
     os.environ["GRAPHRAG_CHAT_API_KEY"] = chat_config["api_key"]
     os.environ["GRAPHRAG_EMBED_MODEL_PROVIDER"] = index_embed_provider

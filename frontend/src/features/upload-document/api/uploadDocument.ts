@@ -33,6 +33,10 @@ export interface IndexProgress {
   total_chunks: number | null;
   current_chunk: number | null;
   current_chunk_progress: number | null;
+  phase: string | null;
+  phase_processed: number | null;
+  phase_total: number | null;
+  phase_progress: number | null;
   entity_count: number | null;
   relationship_count: number | null;
   error: string | null;

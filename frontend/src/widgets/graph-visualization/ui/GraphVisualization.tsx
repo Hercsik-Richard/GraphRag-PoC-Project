@@ -48,11 +48,14 @@ type LayoutComponent = {
 
 const NODE_WIDTH = 190;
 const NODE_HEIGHT = 92;
-const NODE_SPACING_X = 250;
-const NODE_SPACING_Y = 150;
-const COMPONENT_GAP_X = 320;
-const COMPONENT_GAP_Y = 260;
-const LAYOUT_ROW_WIDTH = 2600;
+const NODE_SPACING_X = 360;
+const NODE_SPACING_Y = 240;
+const COMPONENT_GAP_X = 520;
+const COMPONENT_GAP_Y = 420;
+const LAYOUT_ROW_WIDTH = 5200;
+const MIN_NODE_DISTANCE = 330;
+const EDGE_DISTANCE = 560;
+const FORCE_ITERATIONS = 320;
 
 const graphColor = (name: string) => `hsl(var(${name}))`;
 
@@ -182,10 +185,23 @@ function layoutConnectedComponent(
       a.id.localeCompare(b.id)
   );
 
-  const initialRadius = Math.max(260, Math.sqrt(nodeCount) * 135);
+  const nodesPerRing = Math.max(8, Math.ceil(Math.sqrt(nodeCount) * 1.45));
   sortedNodes.forEach((node, index) => {
-    const angle = (2 * Math.PI * index) / nodeCount;
-    const radius = initialRadius * (0.78 + (index % 3) * 0.12);
+    if (index === 0) {
+      positions.set(node.id, { x: 0, y: 0 });
+      return;
+    }
+
+    const ring = Math.floor((index - 1) / nodesPerRing) + 1;
+    const ringIndex = (index - 1) % nodesPerRing;
+    const ringSize = Math.min(nodesPerRing, nodeCount - 1 - (ring - 1) * nodesPerRing);
+    const angleOffset = ring % 2 === 0 ? Math.PI / ringSize : 0;
+    const angle = (2 * Math.PI * ringIndex) / ringSize + angleOffset;
+    const radius = Math.max(
+      ring * EDGE_DISTANCE,
+      (ringSize * MIN_NODE_DISTANCE) / (2 * Math.PI)
+    );
+
     positions.set(node.id, {
       x: Math.cos(angle) * radius,
       y: Math.sin(angle) * radius,
@@ -196,8 +212,8 @@ function layoutConnectedComponent(
     .filter((edge) => positions.has(edge.source) && positions.has(edge.target))
     .map((edge) => [edge.source, edge.target] as const);
 
-  for (let iteration = 0; iteration < 260; iteration += 1) {
-    const alpha = 1 - iteration / 260;
+  for (let iteration = 0; iteration < FORCE_ITERATIONS; iteration += 1) {
+    const alpha = 1 - iteration / FORCE_ITERATIONS;
     const ids = sortedNodes.map((node) => node.id);
 
     for (let i = 0; i < ids.length; i += 1) {
@@ -214,7 +230,7 @@ function layoutConnectedComponent(
           distance = 1;
         }
 
-        const repel = (9000 * alpha) / Math.max(distance * distance, 100);
+        const repel = (52000 * alpha) / Math.max(distance * distance, 100);
         const pushX = (dx / distance) * repel;
         const pushY = (dy / distance) * repel;
         first.x -= pushX;
@@ -222,9 +238,8 @@ function layoutConnectedComponent(
         second.x += pushX;
         second.y += pushY;
 
-        const minDistance = 205;
-        if (distance < minDistance) {
-          const overlap = ((minDistance - distance) / 2) * alpha;
+        if (distance < MIN_NODE_DISTANCE) {
+          const overlap = ((MIN_NODE_DISTANCE - distance) / 2) * alpha;
           const overlapX = (dx / distance) * overlap;
           const overlapY = (dy / distance) * overlap;
           first.x -= overlapX;
@@ -241,8 +256,8 @@ function layoutConnectedComponent(
       const dx = targetPosition.x - sourcePosition.x;
       const dy = targetPosition.y - sourcePosition.y;
       const distance = Math.max(Math.hypot(dx, dy), 1);
-      const preferredDistance = 290;
-      const force = (distance - preferredDistance) * 0.018 * alpha;
+      const preferredDistance = EDGE_DISTANCE;
+      const force = (distance - preferredDistance) * 0.012 * alpha;
       const forceX = (dx / distance) * force;
       const forceY = (dy / distance) * force;
 
@@ -250,11 +265,6 @@ function layoutConnectedComponent(
       sourcePosition.y += forceY;
       targetPosition.x -= forceX;
       targetPosition.y -= forceY;
-    });
-
-    positions.forEach((position) => {
-      position.x *= 0.996;
-      position.y *= 0.996;
     });
   }
 

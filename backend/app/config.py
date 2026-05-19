@@ -9,6 +9,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ModelProvider = Literal["ollama", "gemini", "openrouter"]
 
 
+def is_gemini_3_model(provider: ModelProvider, model: str) -> bool:
+    """Return whether a chat model is from the Gemini 3 family."""
+    normalized_model = model.casefold().removeprefix("models/")
+    return provider == "gemini" and normalized_model.startswith("gemini-3")
+
+
+def chat_temperature_for_model(provider: ModelProvider, model: str) -> float:
+    """Return a LiteLLM-safe chat temperature for the selected provider/model."""
+    if is_gemini_3_model(provider, model):
+        return 1.0
+    return 0.0
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables with APP_ prefix."""
 

@@ -51,16 +51,31 @@ from graphrag.query.structured_search.local_search.search import LocalSearch
 from graphrag.tokenizer.get_tokenizer import get_tokenizer
 from graphrag.vector_stores.lancedb import LanceDBVectorStore
 
-from app.config import ModelProvider, settings
+from app.config import ModelProvider, chat_temperature_for_model, settings
 
 logger = logging.getLogger(__name__)
 
 GEMINI_MODEL_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 INDEX_PROGRESS_HEARTBEAT_CAP = 75
 EXTRACT_GRAPH_PROGRESS_PATTERN = re.compile(r"extract graph progress:\s*(\d+)/(\d+)")
+SUMMARIZE_DESCRIPTIONS_PROGRESS_PATTERN = re.compile(
+    r"summarize entity/relationship description progress:\s*(\d+)/(\d+)",
+    re.IGNORECASE,
+)
 INITIAL_CHUNK_SECONDS_ESTIMATE = 60.0
 ProgressCallback = Callable[
-    [int, str, int | None, int | None, int | None, int | None],
+    [
+        int,
+        str,
+        int | None,
+        int | None,
+        int | None,
+        int | None,
+        str | None,
+        int | None,
+        int | None,
+        int | None,
+    ],
     None,
 ]
 
@@ -343,6 +358,50 @@ class RateLimitedChatModel:
             yield chunk
 
 
+class Gemini3TemperatureGuardChatModel:
+    """Proxy that prevents LiteLLM Gemini 3 calls from using temperature below 1.0."""
+
+    def __init__(self, wrapped_model: Any, temperature: float) -> None:
+        self._wrapped_model = wrapped_model
+        self._temperature = temperature
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped_model, name)
+
+    def _normalize_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(kwargs)
+        temperature = normalized.get("temperature")
+        if temperature is None or self._is_below_safe_temperature(temperature):
+            normalized["temperature"] = self._temperature
+
+        for key in ("model_parameters", "model_params"):
+            params = normalized.get(key)
+            if isinstance(params, dict):
+                params_temperature = params.get("temperature")
+                if params_temperature is None or self._is_below_safe_temperature(
+                    params_temperature
+                ):
+                    normalized[key] = {**params, "temperature": self._temperature}
+
+        return normalized
+
+    def _is_below_safe_temperature(self, value: Any) -> bool:
+        try:
+            return float(value) < self._temperature
+        except (TypeError, ValueError):
+            return False
+
+    async def achat(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._wrapped_model.achat(*args, **self._normalize_kwargs(kwargs))
+
+    async def achat_stream(self, *args: Any, **kwargs: Any) -> Any:
+        async for chunk in self._wrapped_model.achat_stream(
+            *args,
+            **self._normalize_kwargs(kwargs),
+        ):
+            yield chunk
+
+
 class GraphRAGService:
     """Service for managing GraphRAG operations."""
 
@@ -379,6 +438,10 @@ class GraphRAGService:
 
         # Set environment variables for GraphRAG indexing based on index providers
         self._set_graphrag_env_vars(self.index_chat_provider, self.index_embed_provider)
+        self._ensure_graphrag_chat_temperature_config(
+            self.index_chat_provider,
+            settings.get_model_name(self.index_chat_provider, "chat"),
+        )
 
         # Load GraphRAG configuration
         self.config = load_config(self.graphrag_root)
@@ -471,9 +534,11 @@ class GraphRAGService:
 
         chat_config = self._provider_env_config(chat_provider, ModelType.Chat)
         embed_config = self._provider_env_config(embed_provider, ModelType.Embedding)
+        chat_temperature = chat_temperature_for_model(chat_provider, chat_config["model"])
 
         os.environ["GRAPHRAG_CHAT_MODEL_PROVIDER"] = chat_provider
         os.environ["GRAPHRAG_CHAT_MODEL"] = chat_config["model"]
+        os.environ["GRAPHRAG_CHAT_TEMPERATURE"] = str(chat_temperature)
         os.environ["GRAPHRAG_CHAT_API_BASE"] = chat_config["api_base"]
         os.environ["GRAPHRAG_CHAT_API_KEY"] = chat_config["api_key"]
         os.environ["GRAPHRAG_EMBED_MODEL_PROVIDER"] = embed_provider
@@ -488,12 +553,52 @@ class GraphRAGService:
         os.environ["GRAPHRAG_API_KEY"] = chat_config["api_key"]
 
         logger.info(
-            "GraphRAG environment configured for index chat=%s, embed=%s, chat RPM=%s, chat TPM=%s",
+            "GraphRAG environment configured for index chat=%s, embed=%s, chat temperature=%s, chat RPM=%s, chat TPM=%s",
             chat_provider,
             embed_provider,
+            chat_temperature,
             chat_rate_limits["requests_per_minute"],
             chat_rate_limits["tokens_per_minute"],
         )
+
+    def _ensure_graphrag_chat_temperature_config(
+        self,
+        chat_provider: ModelProvider,
+        chat_model: str,
+    ) -> None:
+        """Update an existing GraphRAG settings file if it still has a stale temperature."""
+        settings_path = self.graphrag_root / "settings.yaml"
+        try:
+            content = settings_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+
+        configured_temperature = str(chat_temperature_for_model(chat_provider, chat_model))
+        replacement = f"    temperature: {configured_temperature}"
+        updated_lines: list[str] = []
+        changed = False
+        in_default_chat_model = False
+
+        for line in content.splitlines():
+            stripped = line.strip()
+            if line.startswith("  default_chat_model:"):
+                in_default_chat_model = True
+            elif in_default_chat_model and line.startswith("  ") and not line.startswith("    "):
+                in_default_chat_model = False
+
+            if in_default_chat_model and stripped.startswith("temperature:"):
+                updated_lines.append(replacement)
+                changed = changed or line != replacement
+            else:
+                updated_lines.append(line)
+
+        if changed:
+            settings_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+            logger.info(
+                "Updated GraphRAG settings chat temperature to %s for %s",
+                configured_temperature,
+                chat_model,
+            )
 
     def _index_chat_rate_limits(self, provider: ModelProvider) -> dict[str, int]:
         """Return GraphRAG index chat RPM/TPM limits for the selected provider."""
@@ -552,14 +657,20 @@ class GraphRAGService:
         """
         provider_config = self._provider_env_config(provider, model_type)
         api_base = provider_config["api_base"] or None
-        return LanguageModelConfig(
-            api_key=provider_config["api_key"],
-            type=model_type,
-            model_provider=provider,
-            model=provider_config["model"],
-            api_base=api_base,
-            max_retries=1,
-        )
+        config_values: dict[str, Any] = {
+            "api_key": provider_config["api_key"],
+            "type": model_type,
+            "model_provider": provider,
+            "model": provider_config["model"],
+            "api_base": api_base,
+            "max_retries": 1,
+        }
+        if model_type == ModelType.Chat:
+            config_values["temperature"] = chat_temperature_for_model(
+                provider,
+                provider_config["model"],
+            )
+        return LanguageModelConfig(**config_values)
 
     def _init_models(self) -> None:
         """Initialize LLM and embedding models for querying."""
@@ -612,6 +723,17 @@ class GraphRAGService:
                 settings.gemini_free_tier_query_rpm,
                 settings.gemini_free_tier_query_tpm,
                 settings.gemini_free_tier_query_rpd,
+            )
+
+        query_chat_temperature = self._query_chat_temperature()
+        if query_chat_temperature >= 1.0:
+            self.chat_model = Gemini3TemperatureGuardChatModel(
+                self.chat_model,
+                query_chat_temperature,
+            )
+            logger.info(
+                "Gemini 3 temperature guard enabled for query chat: temperature=%s",
+                query_chat_temperature,
             )
 
         logger.info(
@@ -1000,6 +1122,10 @@ class GraphRAGService:
             self.index_chat_provider = active_index_chat_provider
             self.index_provider = active_index_chat_provider
             self._set_graphrag_env_vars(active_index_chat_provider, self.index_embed_provider)
+            self._ensure_graphrag_chat_temperature_config(
+                active_index_chat_provider,
+                settings.get_model_name(active_index_chat_provider, "chat"),
+            )
             self.config = load_config(self.graphrag_root)
             logger.info(
                 "Indexing with chat provider %s and embedding provider %s",
@@ -1032,6 +1158,10 @@ class GraphRAGService:
                     None,
                     None,
                     None,
+                    "Preparing workspace",
+                    None,
+                    None,
+                    None,
                 )
             self._prepare_workspace_for_indexing()
 
@@ -1041,6 +1171,10 @@ class GraphRAGService:
                     10,
                     "Saving document to the GraphRAG input directory",
                     None,
+                    None,
+                    None,
+                    None,
+                    "Saving document",
                     None,
                     None,
                     None,
@@ -1060,6 +1194,10 @@ class GraphRAGService:
                     estimated_total_chunks,
                     1,
                     0,
+                    "Starting index",
+                    0,
+                    estimated_total_chunks,
+                    0,
                 )
 
             logger.info("Starting GraphRAG indexing...")
@@ -1077,7 +1215,30 @@ class GraphRAGService:
                     await asyncio.sleep(5)
                     now = time.monotonic()
                     extract_progress = self._read_extract_graph_progress(indexing_log_offset)
-                    if extract_progress:
+                    summarize_progress = self._read_summarize_descriptions_progress(
+                        indexing_log_offset
+                    )
+                    phase = "Preparing graph"
+                    phase_processed: int | None = None
+                    phase_total: int | None = None
+                    phase_progress: int | None = None
+
+                    if summarize_progress:
+                        if extract_progress:
+                            chunks_processed, total_chunks = extract_progress
+                        summarize_processed, summarize_total = summarize_progress
+                        summarize_percent = math.floor(
+                            100 * summarize_processed / max(summarize_total, 1)
+                        )
+                        progress = min(92, 75 + math.floor(17 * summarize_percent / 100))
+                        message = "GraphRAG is summarizing entity and relationship descriptions"
+                        phase = "Summarize entity/relationship description progress"
+                        phase_processed = summarize_processed
+                        phase_total = summarize_total
+                        phase_progress = summarize_percent
+                        current_chunk = total_chunks
+                        current_chunk_progress = 100
+                    elif extract_progress:
                         chunks_processed, total_chunks = extract_progress
                         if chunks_processed > last_processed:
                             completed_delta = chunks_processed - last_processed
@@ -1121,6 +1282,12 @@ class GraphRAGService:
                             if chunks_processed >= total_chunks
                             else "GraphRAG is extracting entities and relationships"
                         )
+                        phase = "Extract graph progress"
+                        phase_processed = chunks_processed
+                        phase_total = total_chunks
+                        phase_progress = math.floor(
+                            100 * chunks_processed / max(total_chunks, 1)
+                        )
                     else:
                         current_chunk = 1
                         expected_seconds = avg_chunk_seconds or INITIAL_CHUNK_SECONDS_ESTIMATE
@@ -1132,6 +1299,9 @@ class GraphRAGService:
                         )
                         progress = min(progress + 2, INDEX_PROGRESS_HEARTBEAT_CAP)
                         message = "GraphRAG is preparing chunks for extraction"
+                        phase_processed = 0
+                        phase_total = estimated_total_chunks
+                        phase_progress = min(progress, 20)
 
                     if progress_callback:
                         progress_callback(
@@ -1141,6 +1311,10 @@ class GraphRAGService:
                             total_chunks,
                             current_chunk,
                             current_chunk_progress,
+                            phase,
+                            phase_processed,
+                            phase_total,
+                            phase_progress,
                         )
 
             heartbeat_task = asyncio.create_task(report_indexing_heartbeat())
@@ -1182,6 +1356,10 @@ class GraphRAGService:
                     total_chunks,
                     total_chunks,
                     100,
+                    "Loading graph statistics",
+                    None,
+                    None,
+                    None,
                 )
 
             self._invalidate_cached_index()
@@ -1196,6 +1374,10 @@ class GraphRAGService:
                     total_chunks,
                     total_chunks,
                     100,
+                    "Completed",
+                    None,
+                    None,
+                    None,
                 )
             return stats
 
@@ -1251,6 +1433,18 @@ class GraphRAGService:
 
     def _read_extract_graph_progress(self, log_offset: int) -> tuple[int, int] | None:
         """Read GraphRAG's latest extract_graph chunk progress from the current run log."""
+        return self._read_progress_pattern(log_offset, EXTRACT_GRAPH_PROGRESS_PATTERN)
+
+    def _read_summarize_descriptions_progress(self, log_offset: int) -> tuple[int, int] | None:
+        """Read GraphRAG's latest entity/relationship description summary progress."""
+        return self._read_progress_pattern(log_offset, SUMMARIZE_DESCRIPTIONS_PROGRESS_PATTERN)
+
+    def _read_progress_pattern(
+        self,
+        log_offset: int,
+        pattern: re.Pattern[str],
+    ) -> tuple[int, int] | None:
+        """Read the latest processed/total progress tuple matching a GraphRAG log pattern."""
         log_path = self.output_dir / "indexing-engine.log"
         try:
             with log_path.open("r", encoding="utf-8", errors="ignore") as log_file:
@@ -1259,7 +1453,7 @@ class GraphRAGService:
         except FileNotFoundError:
             return None
 
-        matches = EXTRACT_GRAPH_PROGRESS_PATTERN.findall(content)
+        matches = pattern.findall(content)
         if not matches:
             return None
 
@@ -1585,6 +1779,13 @@ class GraphRAGService:
         """Return True when query-time generation uses local Ollama."""
         return self.query_chat_provider == "ollama"
 
+    def _query_chat_temperature(self) -> float:
+        """Return the safe temperature for query-time chat generation."""
+        return chat_temperature_for_model(
+            self.query_chat_provider,
+            settings.get_model_name(self.query_chat_provider, "chat"),
+        )
+
     def _local_context_params(self) -> dict[str, Any]:
         """Return local search context settings tuned for the active query provider."""
         if self._is_ollama_query():
@@ -1709,7 +1910,7 @@ class GraphRAGService:
             response = await self.chat_model.achat(
                 prompt,
                 max_tokens=1200 if self._is_ollama_query() else 1800,
-                temperature=0.0,
+                temperature=self._query_chat_temperature(),
             )
             content = str(response.output.content)
             parsed = self._parse_source_extraction_json(content)
@@ -2149,7 +2350,7 @@ Add sections and commentary to the response as appropriate for the length and fo
                 system_prompt=custom_system_prompt,
                 model_params={
                     "max_tokens": 1200 if self._is_ollama_query() else 2000,
-                    "temperature": 0.0,
+                    "temperature": self._query_chat_temperature(),
                 },
                 context_builder_params=self._local_context_params(),
                 response_type="multiple paragraphs",
@@ -2177,7 +2378,7 @@ Add sections and commentary to the response as appropriate for the length and fo
 
             map_llm_params: dict[str, Any] = {
                 "max_tokens": 1000,
-                "temperature": 0.0,
+                "temperature": self._query_chat_temperature(),
             }
             json_mode = self.query_chat_provider != "ollama"
             if json_mode:
@@ -2191,7 +2392,7 @@ Add sections and commentary to the response as appropriate for the length and fo
                 map_llm_params=map_llm_params,
                 reduce_llm_params={
                     "max_tokens": 2000,
-                    "temperature": 0.0,
+                    "temperature": self._query_chat_temperature(),
                 },
                 allow_general_knowledge=False,
                 json_mode=json_mode,

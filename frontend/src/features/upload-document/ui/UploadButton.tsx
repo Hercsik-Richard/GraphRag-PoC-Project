@@ -21,8 +21,12 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
   const [totalChunks, setTotalChunks] = useState<number | null>(null);
   const [currentChunk, setCurrentChunk] = useState<number | null>(null);
   const [currentChunkProgress, setCurrentChunkProgress] = useState<number | null>(null);
+  const [phase, setPhase] = useState<string | null>(null);
+  const [phaseProcessed, setPhaseProcessed] = useState<number | null>(null);
+  const [phaseTotal, setPhaseTotal] = useState<number | null>(null);
+  const [phaseProgress, setPhaseProgress] = useState<number | null>(null);
   const [pollingDocumentId, setPollingDocumentId] = useState<string | null>(null);
-  const shouldShowProgress = status === "indexing" || status === "success" || status === "error";
+  const shouldShowProgress = status === "indexing";
 
   useEffect(() => {
     if (!pollingDocumentId || status !== "indexing") return;
@@ -40,6 +44,10 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
         setTotalChunks(current.total_chunks);
         setCurrentChunk(current.current_chunk);
         setCurrentChunkProgress(current.current_chunk_progress);
+        setPhase(current.phase);
+        setPhaseProcessed(current.phase_processed);
+        setPhaseTotal(current.phase_total);
+        setPhaseProgress(current.phase_progress);
 
         if (current.status === "completed") {
           setStatus("success");
@@ -54,6 +62,10 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
             setTotalChunks(null);
             setCurrentChunk(null);
             setCurrentChunkProgress(null);
+            setPhase(null);
+            setPhaseProcessed(null);
+            setPhaseTotal(null);
+            setPhaseProgress(null);
             if (fileInputRef.current) {
               fileInputRef.current.value = "";
             }
@@ -106,6 +118,10 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
       setTotalChunks(null);
       setCurrentChunk(null);
       setCurrentChunkProgress(null);
+      setPhase("Uploading document");
+      setPhaseProcessed(null);
+      setPhaseTotal(null);
+      setPhaseProgress(null);
 
       const response = await uploadDocument({ file, modelProvider });
       setProgress(response.progress);
@@ -159,7 +175,7 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
   };
 
   return (
-    <div>
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
       <input
         ref={fileInputRef}
         type="file"
@@ -187,125 +203,124 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
         {getButtonContent()}
       </label>
       {shouldShowProgress && (
-        <>
-          <IndexingProgressBar
-            status={status}
-            progress={progress}
-            message={message}
-            error={error}
-            chunksProcessed={chunksProcessed}
-            totalChunks={totalChunks}
-            currentChunk={currentChunk}
-            currentChunkProgress={currentChunkProgress}
-          />
-          <div className="fixed bottom-6 right-6 z-50 w-80 max-w-[calc(100vw-3rem)] rounded-xl border border-border/60 bg-card p-4 shadow-[0_20px_42px_rgba(0,0,0,0.22)]">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Index status
-                </p>
-                <p className="mt-1 truncate text-sm font-semibold text-foreground">
-                  {status === "success"
-                    ? "Completed"
-                    : status === "error"
-                      ? "Failed"
-                      : "Indexing document"}
-                </p>
-              </div>
-              <span className="shrink-0 text-sm font-bold text-accent">{progress}%</span>
-            </div>
-            <IndexingProgressBar
-              status={status}
-              progress={progress}
-              message={message}
-              error={error}
-              chunksProcessed={chunksProcessed}
-              totalChunks={totalChunks}
-              currentChunk={currentChunk}
-              currentChunkProgress={currentChunkProgress}
-            />
-          </div>
-        </>
+        <IndexingProgressPanel
+          progress={progress}
+          message={message}
+          chunksProcessed={chunksProcessed}
+          totalChunks={totalChunks}
+          currentChunk={currentChunk}
+          currentChunkProgress={currentChunkProgress}
+          phase={phase}
+          phaseProcessed={phaseProcessed}
+          phaseTotal={phaseTotal}
+          phaseProgress={phaseProgress}
+        />
       )}
     </div>
   );
 }
 
-function IndexingProgressBar({
-  status,
+function IndexingProgressPanel({
   progress,
   message,
-  error,
   chunksProcessed,
   totalChunks,
   currentChunk,
   currentChunkProgress,
+  phase,
+  phaseProcessed,
+  phaseTotal,
+  phaseProgress,
 }: {
-  status: "idle" | "indexing" | "success" | "error";
   progress: number;
   message: string;
-  error: unknown;
   chunksProcessed: number | null;
   totalChunks: number | null;
   currentChunk: number | null;
   currentChunkProgress: number | null;
+  phase: string | null;
+  phaseProcessed: number | null;
+  phaseTotal: number | null;
+  phaseProgress: number | null;
 }) {
   const hasChunkProgress = chunksProcessed !== null && totalChunks !== null;
   const hasCurrentChunkProgress =
     currentChunk !== null && currentChunkProgress !== null && totalChunks !== null;
+  const hasPhaseProgress =
+    phaseProcessed !== null && phaseTotal !== null && phaseProgress !== null;
 
   return (
-    <div className="mt-2 w-64 max-w-full space-y-2">
-      <div>
-        <div className="mb-1 flex items-center justify-between gap-3 text-xs">
-          <span className="text-muted-foreground">Overall</span>
-          <span className="font-medium text-foreground">{progress}%</span>
+    <div className="w-full min-w-[18rem] max-w-md rounded-lg border border-border/70 bg-background/80 px-3 py-2 shadow-sm sm:w-96">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Indexing status
+          </p>
+          <p className="mt-0.5 truncate text-xs font-semibold text-foreground">
+            {phase || message || "Indexing document"}
+          </p>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-background/60">
-          <div
-            className={cn(
-              "h-full transition-all duration-500",
-              status === "error" ? "bg-destructive" : "bg-accent"
-            )}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        <span className="shrink-0 text-sm font-bold text-accent">{progress}%</span>
       </div>
 
-      {hasCurrentChunkProgress && (
-        <div>
-          <div className="mb-1 flex items-center justify-between gap-3 text-xs">
-            <span className="text-muted-foreground">
-              Current chunk {currentChunk} / {totalChunks}
-            </span>
-            <span className="font-medium text-foreground">{currentChunkProgress}%</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-background/60">
-            <div
-              className={cn(
-                "h-full transition-all duration-500",
-                status === "error" ? "bg-destructive" : "bg-secondary"
-              )}
-              style={{ width: `${currentChunkProgress}%` }}
-            />
-          </div>
-        </div>
-      )}
+      <div className="space-y-2">
+        <ProgressMeter label="Overall" value={progress} tone="accent" />
 
-      {hasChunkProgress && (
-        <p className="text-xs font-medium text-foreground">
-          Completed chunks: {chunksProcessed} / {totalChunks}
-        </p>
-      )}
-
-      <p
-        className={cn(
-          "text-xs",
-          status === "error" ? "text-destructive" : "text-muted-foreground"
+        {hasPhaseProgress && (
+          <ProgressMeter
+            label={`${phaseProcessed} / ${phaseTotal}`}
+            value={phaseProgress}
+            tone="primary"
+          />
         )}
-      >
-        {message || (error ? "Failed to upload. Please try again." : "")}
-      </p>
+
+        {hasCurrentChunkProgress && (
+          <ProgressMeter
+            label={`Current chunk ${currentChunk} / ${totalChunks}`}
+            value={currentChunkProgress}
+            tone="secondary"
+          />
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[0.7rem] text-muted-foreground">
+          <span className="truncate">{message}</span>
+          {hasChunkProgress && (
+            <span className="shrink-0 font-medium text-foreground">
+              Chunks {chunksProcessed} / {totalChunks}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProgressMeter({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "accent" | "primary" | "secondary";
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-3 text-[0.68rem]">
+        <span className="truncate text-muted-foreground">{label}</span>
+        <span className="font-medium text-foreground">{value}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            "h-full transition-all duration-500",
+            tone === "accent" && "bg-accent",
+            tone === "primary" && "bg-primary",
+            tone === "secondary" && "bg-secondary"
+          )}
+          style={{ width: `${value}%` }}
+        />
+      </div>
     </div>
   );
 }
