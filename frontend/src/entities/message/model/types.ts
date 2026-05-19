@@ -1,6 +1,7 @@
 /**
  * Message entity types
  */
+import type { ModelProvider } from "@/shared/config/constants";
 
 export interface Message {
   id: string;
@@ -39,6 +40,7 @@ export interface RetrievedRelationship {
 export interface QueryRequest {
   question: string;
   search_mode?: SearchMode;
+  query_model_provider?: ModelProvider;
 }
 
 export interface QueryResponse {

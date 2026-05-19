@@ -35,9 +35,35 @@ APP_INDEX_EMBED_PROVIDER=gemini
 APP_QUERY_CHAT_PROVIDER=gemini
 APP_QUERY_EMBED_PROVIDER=gemini
 APP_GEMINI_API_KEY=your-key
-APP_GEMINI_LLM_MODEL=gemini-2.5-flash-lite
+APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
 APP_GEMINI_EMBED_MODEL=gemini-embedding-001
 ```
+
+### Gemini Index And Query Chat With Ollama Embeddings
+
+```env
+APP_MODEL_PROVIDER=ollama
+APP_INDEX_CHAT_PROVIDER=gemini
+APP_INDEX_EMBED_PROVIDER=ollama
+APP_QUERY_CHAT_PROVIDER=gemini
+APP_QUERY_EMBED_PROVIDER=ollama
+APP_OLLAMA_LLM_MODEL=qwen2.5:3b
+APP_OLLAMA_EMBED_MODEL=nomic-embed-text
+APP_GEMINI_API_KEY=your-key
+APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
+APP_GEMINI_FREE_TIER_GUARD_ENABLED=true
+APP_GEMINI_FREE_TIER_QUERY_RPM=7
+APP_GEMINI_FREE_TIER_QUERY_TPM=120000
+APP_GEMINI_FREE_TIER_QUERY_RPD=500
+APP_GEMINI_FREE_TIER_INDEX_GUARD_ENABLED=true
+APP_GEMINI_FREE_TIER_INDEX_RPM=7
+APP_GEMINI_FREE_TIER_INDEX_TPM=120000
+APP_GEMINI_FREE_TIER_INDEX_RPD=500
+```
+
+This keeps embeddings local while using Gemini 3.1 Flash-Lite for GraphRAG index-time
+extraction and query-time answer generation. The runtime guards stay below the configured
+15 RPM / 250k TPM / 500 RPD project limits, and index/query share the same daily counter.
 
 ### OpenRouter Chat With Ollama Embeddings
 

@@ -7,12 +7,14 @@ import { useConversation } from "@/entities/conversation";
 import type { Message, SearchMode } from "@/entities/message";
 import { MessageBubble } from "@/entities/message";
 import { MessageForm, useSendMessage } from "@/features/send-message";
+import type { ModelProvider } from "@/shared";
 
 interface ChatInterfaceProps {
   conversationId: string | null;
   onMessageSent?: () => void;
   onEntityClick?: (entityId: string) => void;
   onRelationshipClick?: (source: string, target: string) => void;
+  queryModelProvider: ModelProvider;
 }
 
 export function ChatInterface({
@@ -20,6 +22,7 @@ export function ChatInterface({
   onMessageSent,
   onEntityClick,
   onRelationshipClick,
+  queryModelProvider,
 }: ChatInterfaceProps) {
   const {
     messages,
@@ -46,7 +49,11 @@ export function ChatInterface({
     if (!conversationId) return;
 
     try {
-      await sendMessage({ question: content, search_mode: searchMode });
+      await sendMessage({
+        question: content,
+        search_mode: searchMode,
+        query_model_provider: queryModelProvider,
+      });
       await mutate(); // Refresh messages after the backend saved the answer
       onMessageSent?.();
     } catch (error) {

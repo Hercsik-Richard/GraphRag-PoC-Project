@@ -11,6 +11,7 @@ from graphrag.query.context_builder.conversation_history import (
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import ModelProvider
 from app.services.graphrag import GraphRAGError, SearchMode, graphrag_service
 
 logger = logging.getLogger(__name__)
@@ -290,6 +291,7 @@ async def process_query(
     conversation_id: UUID,
     question: str,
     search_mode: SearchMode = "auto",
+    query_model_provider: ModelProvider | None = None,
 ) -> dict[str, Any]:
     """
     Process a user query with GraphRAG and save messages.
@@ -331,7 +333,12 @@ async def process_query(
 
         # 3. Execute GraphRAG query with history
         logger.info(f"Executing GraphRAG query: {question[:50]}...")
-        query_result = await graphrag_service.query(question, conversation_history, search_mode)
+        query_result = await graphrag_service.query(
+            question,
+            conversation_history,
+            search_mode,
+            query_model_provider,
+        )
 
         answer = query_result.get("answer", "")
         retrieved_entities = query_result.get("retrieved_entities", [])
@@ -377,8 +384,9 @@ async def process_query(
             conversation_id,
             "assistant",
             (
-                "A GraphRAG keresés túl sokáig futott vagy hibára futott a lokális modellnél. "
-                "Próbáld újra Local módban, vagy válts gyorsabb query chat providerre. "
+                "A GraphRAG keresés túl sokáig futott, provider-hibára futott, vagy elérte "
+                "a beállított query limitet. Próbáld újra Local módban, rövidebb kérdéssel, "
+                "vagy válts másik query chat providerre. "
                 f"Technikai részlet: {e}"
             ),
             retrieved_entities=[],

@@ -5,11 +5,11 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import ModelProvider, settings
 from app.database import async_session_maker, get_db_session
 from app.schemas import (
     DocumentStatusSchema,
@@ -134,7 +134,12 @@ async def update_document_row(
         await session.commit()
 
 
-async def run_indexing_job(document_id: UUID, filename: str, content: bytes) -> None:
+async def run_indexing_job(
+    document_id: UUID,
+    filename: str,
+    content: bytes,
+    index_model_provider: ModelProvider,
+) -> None:
     """Run one GraphRAG indexing job in the background."""
     async with index_lock:
         try:
@@ -157,7 +162,7 @@ async def run_indexing_job(document_id: UUID, filename: str, content: bytes) -> 
                     current_chunk_progress=current_chunk_progress,
                 )
 
-            index_provider = settings.get_index_chat_provider()
+            index_provider = index_model_provider
             index_embed_provider = settings.get_index_embed_provider()
             update_index_job(
                 document_id,
@@ -175,6 +180,7 @@ async def run_indexing_job(document_id: UUID, filename: str, content: bytes) -> 
                 filename,
                 content,
                 progress_callback=update_progress,
+                index_chat_provider=index_model_provider,
             )
 
             await update_document_row(
@@ -211,6 +217,7 @@ async def run_indexing_job(document_id: UUID, filename: str, content: bytes) -> 
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    model_provider: ModelProvider | None = Form(None),
     db: AsyncSession = Depends(get_db_session),
 ) -> UploadResponseSchema:
     """
@@ -278,8 +285,15 @@ async def upload_document(
         )
         await db.commit()
 
-        background_tasks.add_task(run_indexing_job, document_id, file.filename, content)
-        logger.info("Queued indexing job for %s", file.filename)
+        index_model_provider = model_provider or settings.get_index_chat_provider()
+        background_tasks.add_task(
+            run_indexing_job,
+            document_id,
+            file.filename,
+            content,
+            index_model_provider,
+        )
+        logger.info("Queued indexing job for %s with %s", file.filename, index_model_provider)
 
         return UploadResponseSchema(
             status="queued",

@@ -1,9 +1,17 @@
 """Tests for GraphRAG provider configuration and query routing."""
 
+import asyncio
+from pathlib import Path
+
 import pytest
 
 from app.config import Settings
-from app.services.graphrag import GraphRAGService, SourceHit
+from app.services.graphrag import (
+    GeminiFreeTierRateLimiter,
+    GeminiRateLimitError,
+    GraphRAGService,
+    SourceHit,
+)
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -141,6 +149,68 @@ def test_source_answer_is_formatted_from_validated_hits_only() -> None:
 def test_gemini_provider_requires_api_key() -> None:
     with pytest.raises(ValueError, match="APP_GEMINI_API_KEY"):
         make_settings(query_chat_provider="gemini", gemini_api_key=None)
+
+
+def test_ollama_index_with_gemini_query_chat_profile() -> None:
+    settings = make_settings(
+        index_chat_provider="ollama",
+        index_embed_provider="ollama",
+        query_chat_provider="gemini",
+        query_embed_provider="ollama",
+        gemini_api_key="test-key",
+        gemini_llm_model="gemini-3.1-flash-lite",
+    )
+
+    assert settings.get_index_chat_provider() == "ollama"
+    assert settings.get_index_embed_provider() == "ollama"
+    assert settings.get_query_chat_provider() == "gemini"
+    assert settings.get_query_embed_provider() == "ollama"
+    assert settings.embedding_config_matches_index() is True
+
+
+def test_gemini_index_and_query_chat_with_ollama_embeddings_profile() -> None:
+    settings = make_settings(
+        index_chat_provider="gemini",
+        index_embed_provider="ollama",
+        query_chat_provider="gemini",
+        query_embed_provider="ollama",
+        gemini_api_key="test-key",
+        gemini_llm_model="gemini-3.1-flash-lite",
+    )
+
+    assert settings.get_index_chat_provider() == "gemini"
+    assert settings.get_index_embed_provider() == "ollama"
+    assert settings.get_query_chat_provider() == "gemini"
+    assert settings.get_query_embed_provider() == "ollama"
+    assert settings.embedding_config_matches_index() is True
+
+
+def test_gemini_free_tier_guard_defaults_are_conservative() -> None:
+    settings = make_settings(query_chat_provider="gemini", gemini_api_key="test-key")
+
+    assert settings.gemini_free_tier_guard_enabled is True
+    assert settings.gemini_free_tier_query_rpm == 7
+    assert settings.gemini_free_tier_query_tpm == 120_000
+    assert settings.gemini_free_tier_query_rpd == 500
+    assert settings.gemini_free_tier_index_rpm == 7
+    assert settings.gemini_free_tier_index_tpm == 120_000
+    assert settings.gemini_free_tier_index_rpd == 500
+
+
+def test_gemini_free_tier_limiter_blocks_after_daily_budget(tmp_path: Path) -> None:
+    limiter = GeminiFreeTierRateLimiter(
+        state_path=tmp_path / "gemini-rate-limit.json",
+        requests_per_minute=60,
+        tokens_per_minute=10_000,
+        requests_per_day=1,
+    )
+
+    async def reserve_twice() -> None:
+        await limiter.acquire(100)
+        with pytest.raises(GeminiRateLimitError, match="napi query limitet"):
+            await limiter.acquire(100)
+
+    asyncio.run(reserve_twice())
 
 
 def test_openrouter_provider_requires_api_key() -> None:

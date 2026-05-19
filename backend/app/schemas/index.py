@@ -57,3 +57,10 @@ class IndexStatusResponseSchema(BaseModel):
 
     documents: list[DocumentStatusSchema] = Field(default_factory=list)
     total_documents: int
+
+
+class DeleteCurrentIndexResponseSchema(BaseModel):
+    """Schema for deleting the currently loaded GraphRAG index."""
+
+    status: str = "deleted"
+    message: str

@@ -221,9 +221,35 @@ APP_INDEX_EMBED_PROVIDER=gemini
 APP_QUERY_CHAT_PROVIDER=gemini
 APP_QUERY_EMBED_PROVIDER=gemini
 APP_GEMINI_API_KEY=your-key
-APP_GEMINI_LLM_MODEL=gemini-2.5-flash-lite
+APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
 APP_GEMINI_EMBED_MODEL=gemini-embedding-001
 ```
+
+Gemini indexelés és query chat Ollama embeddinggel:
+
+```env
+APP_MODEL_PROVIDER=ollama
+APP_INDEX_CHAT_PROVIDER=gemini
+APP_INDEX_EMBED_PROVIDER=ollama
+APP_QUERY_CHAT_PROVIDER=gemini
+APP_QUERY_EMBED_PROVIDER=ollama
+APP_OLLAMA_LLM_MODEL=qwen2.5:3b
+APP_OLLAMA_EMBED_MODEL=nomic-embed-text
+APP_GEMINI_API_KEY=your-key
+APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
+APP_GEMINI_FREE_TIER_GUARD_ENABLED=true
+APP_GEMINI_FREE_TIER_QUERY_RPM=7
+APP_GEMINI_FREE_TIER_QUERY_TPM=120000
+APP_GEMINI_FREE_TIER_QUERY_RPD=500
+APP_GEMINI_FREE_TIER_INDEX_GUARD_ENABLED=true
+APP_GEMINI_FREE_TIER_INDEX_RPM=7
+APP_GEMINI_FREE_TIER_INDEX_TPM=120000
+APP_GEMINI_FREE_TIER_INDEX_RPD=500
+```
+
+A GraphRAG indexelés sok LLM hívást indíthat, ezért a napi `500 RPD` limit mellett a
+backend indexelés előtt becsült napi keretet foglal. Ha a dokumentum nem fér bele,
+az indexelést leállítja, mielőtt Gemini hívás indulna.
 
 OpenRouter chat Ollama embeddinggel:
 

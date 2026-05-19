@@ -30,8 +30,16 @@ class Settings(BaseSettings):
 
     # Gemini configuration (required when model_provider or index_model_provider is "gemini")
     gemini_api_key: str | None = None
-    gemini_llm_model: str = "gemini-2.5-flash-lite"
+    gemini_llm_model: str = "gemini-3.1-flash-lite"
     gemini_embed_model: str = "gemini-embedding-001"
+    gemini_free_tier_guard_enabled: bool = True
+    gemini_free_tier_query_rpm: int = 7
+    gemini_free_tier_query_tpm: int = 120_000
+    gemini_free_tier_query_rpd: int = 500
+    gemini_free_tier_index_guard_enabled: bool = True
+    gemini_free_tier_index_rpm: int = 7
+    gemini_free_tier_index_tpm: int = 120_000
+    gemini_free_tier_index_rpd: int = 500
 
     # OpenRouter configuration. Embeddings require a model that OpenRouter exposes through
     # /embeddings; otherwise use Ollama or Gemini for embeddings.

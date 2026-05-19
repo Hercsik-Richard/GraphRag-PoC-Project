@@ -3,14 +3,15 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Upload, CheckCircle, XCircle } from "lucide-react";
-import { cn, FILE_UPLOAD } from "@/shared";
+import { cn, FILE_UPLOAD, type ModelProvider } from "@/shared";
 import { getIndexProgress, useUploadDocument } from "../api/uploadDocument";
 
 interface UploadButtonProps {
   onUploadComplete?: () => void;
+  modelProvider: ModelProvider;
 }
 
-export function UploadButton({ onUploadComplete }: UploadButtonProps) {
+export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { uploadDocument, isUploading, error } = useUploadDocument();
   const [status, setStatus] = useState<"idle" | "indexing" | "success" | "error">("idle");
@@ -106,7 +107,7 @@ export function UploadButton({ onUploadComplete }: UploadButtonProps) {
       setCurrentChunk(null);
       setCurrentChunkProgress(null);
 
-      const response = await uploadDocument(file);
+      const response = await uploadDocument({ file, modelProvider });
       setProgress(response.progress);
       setMessage(response.message);
       setPollingDocumentId(response.document_id);

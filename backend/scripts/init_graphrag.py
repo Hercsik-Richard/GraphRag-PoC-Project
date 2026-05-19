@@ -31,6 +31,8 @@ models:
     max_retries: ${GRAPHRAG_MAX_RETRIES}
     max_retry_wait: ${GRAPHRAG_MAX_RETRY_WAIT}
     concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}
+    requests_per_minute: ${GRAPHRAG_CHAT_REQUESTS_PER_MINUTE}
+    tokens_per_minute: ${GRAPHRAG_CHAT_TOKENS_PER_MINUTE}
   default_embedding_model:
     type: embedding
     model_provider: ${GRAPHRAG_EMBED_MODEL_PROVIDER}
@@ -170,6 +172,18 @@ def create_graphrag_workspace() -> None:
 
     chat_config = provider_env(index_chat_provider, "chat")
     embed_config = provider_env(index_embed_provider, "embedding")
+    if (
+        index_chat_provider == "gemini"
+        and settings.gemini_free_tier_index_guard_enabled
+    ):
+        chat_requests_per_minute = settings.gemini_free_tier_index_rpm
+        chat_tokens_per_minute = settings.gemini_free_tier_index_tpm
+    else:
+        chat_requests_per_minute = 1000
+        chat_tokens_per_minute = 10_000_000
+
+    os.environ["GRAPHRAG_CHAT_REQUESTS_PER_MINUTE"] = str(chat_requests_per_minute)
+    os.environ["GRAPHRAG_CHAT_TOKENS_PER_MINUTE"] = str(chat_tokens_per_minute)
     os.environ["GRAPHRAG_CHAT_MODEL_PROVIDER"] = index_chat_provider
     os.environ["GRAPHRAG_CHAT_MODEL"] = chat_config["model"]
     os.environ["GRAPHRAG_CHAT_API_BASE"] = chat_config["api_base"]

@@ -1,14 +1,26 @@
 /**
  * Chat page - Conversations + chat with graph drawer pattern
  */
-import { useMemo, useState, useCallback, useEffect } from "react";
-import { Map, Moon, Sun } from "lucide-react";
+import { useMemo, useState, useCallback, useEffect, type ReactNode } from "react";
+import { Database, Map, Moon, Search, Sun } from "lucide-react";
 import { ChatInterface, ConversationList } from "@/widgets/chat-interface";
 import { GraphVisualization } from "@/widgets/graph-visualization";
 import { NodeDetails } from "@/widgets/node-details";
 import { UploadButton } from "@/features/upload-document";
 import { useGraphData } from "@/entities/graph-node";
-import { cn } from "@/shared";
+import { cn, MODEL_PROVIDER_OPTIONS, type ModelProvider } from "@/shared";
+
+const MODEL_STORAGE_KEYS = {
+  index: "graphrag-index-model-provider",
+  query: "graphrag-query-model-provider",
+} as const;
+
+function readSavedModelProvider(key: string, fallback: ModelProvider): ModelProvider {
+  const saved = window.localStorage.getItem(key);
+  return MODEL_PROVIDER_OPTIONS.some((option) => option.value === saved)
+    ? (saved as ModelProvider)
+    : fallback;
+}
 
 export function ChatPage() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -24,6 +36,12 @@ export function ChatPage() {
   >(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
+  const [indexModelProvider, setIndexModelProvider] = useState<ModelProvider>(() =>
+    readSavedModelProvider(MODEL_STORAGE_KEYS.index, "ollama")
+  );
+  const [queryModelProvider, setQueryModelProvider] = useState<ModelProvider>(() =>
+    readSavedModelProvider(MODEL_STORAGE_KEYS.query, "ollama")
+  );
   const { mutate: refreshGraph } = useGraphData();
 
   useEffect(() => {
@@ -32,6 +50,14 @@ export function ChatPage() {
     root.classList.toggle("light", theme === "light");
     window.localStorage.setItem("graphrag-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MODEL_STORAGE_KEYS.index, indexModelProvider);
+  }, [indexModelProvider]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MODEL_STORAGE_KEYS.query, queryModelProvider);
+  }, [queryModelProvider]);
 
   const handleUploadComplete = () => {
     refreshGraph();
@@ -84,6 +110,12 @@ export function ChatPage() {
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <ModelTaskSelector
+              indexModelProvider={indexModelProvider}
+              queryModelProvider={queryModelProvider}
+              onIndexModelProviderChange={setIndexModelProvider}
+              onQueryModelProviderChange={setQueryModelProvider}
+            />
             <button
               type="button"
               onClick={() =>
@@ -111,7 +143,10 @@ export function ChatPage() {
               <Map className="h-4 w-4" />
               Graph view
             </button>
-            <UploadButton onUploadComplete={handleUploadComplete} />
+            <UploadButton
+              modelProvider={indexModelProvider}
+              onUploadComplete={handleUploadComplete}
+            />
           </div>
         </header>
 
@@ -129,6 +164,7 @@ export function ChatPage() {
             <div className="flex h-full flex-col rounded-xl border border-border/70 bg-card/95 shadow-[0_20px_42px_rgba(0,0,0,0.16)]">
               <ChatInterface
                 conversationId={selectedConversationId}
+                queryModelProvider={queryModelProvider}
                 onMessageSent={() => refreshGraph()}
                 onEntityClick={handleEntityClick}
                 onRelationshipClick={handleRelationshipClick}
@@ -145,11 +181,77 @@ export function ChatPage() {
         onNodeSelect={handleNodeSelect}
         selectedNodeId={selectedNodeId}
         conversationId={selectedConversationId}
+        queryModelProvider={queryModelProvider}
         onEntityClick={handleEntityClick}
         onRelationshipClick={handleRelationshipClick}
         onMessageSent={() => refreshGraph()}
       />
     </div>
+  );
+}
+
+function ModelTaskSelector({
+  indexModelProvider,
+  queryModelProvider,
+  onIndexModelProviderChange,
+  onQueryModelProviderChange,
+}: {
+  indexModelProvider: ModelProvider;
+  queryModelProvider: ModelProvider;
+  onIndexModelProviderChange: (provider: ModelProvider) => void;
+  onQueryModelProviderChange: (provider: ModelProvider) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/80 px-3 py-2">
+      <TaskModelSelect
+        id="index-model-provider"
+        icon={<Database className="h-4 w-4" />}
+        label="Index"
+        value={indexModelProvider}
+        onChange={onIndexModelProviderChange}
+      />
+      <div className="h-7 w-px bg-border/70" />
+      <TaskModelSelect
+        id="query-model-provider"
+        icon={<Search className="h-4 w-4" />}
+        label="Query"
+        value={queryModelProvider}
+        onChange={onQueryModelProviderChange}
+      />
+    </div>
+  );
+}
+
+function TaskModelSelect({
+  id,
+  icon,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  icon: ReactNode;
+  label: string;
+  value: ModelProvider;
+  onChange: (provider: ModelProvider) => void;
+}) {
+  return (
+    <label htmlFor={id} className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+      <span className="text-primary">{icon}</span>
+      <span>{label}</span>
+      <select
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value as ModelProvider)}
+        className="h-8 rounded-md border border-border/70 bg-card px-2 text-xs font-semibold text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {MODEL_PROVIDER_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label} ({option.detail})
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -160,6 +262,7 @@ function GraphDrawer({
   onNodeSelect,
   selectedNodeId,
   conversationId,
+  queryModelProvider,
   onEntityClick,
   onRelationshipClick,
   onMessageSent,
@@ -170,6 +273,7 @@ function GraphDrawer({
   onNodeSelect: (nodeId: string | null) => void;
   selectedNodeId: string | null;
   conversationId: string | null;
+  queryModelProvider: ModelProvider;
   onEntityClick: (entityId: string) => void;
   onRelationshipClick: (source: string, target: string) => void;
   onMessageSent: () => void;
@@ -200,6 +304,7 @@ function GraphDrawer({
         >
           <ChatInterface
             conversationId={conversationId}
+            queryModelProvider={queryModelProvider}
             onEntityClick={onEntityClick}
             onRelationshipClick={onRelationshipClick}
             onMessageSent={onMessageSent}

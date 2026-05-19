@@ -3,7 +3,12 @@
  */
 import useSWRMutation from 'swr/mutation';
 import { apiClient } from '@/shared/api/client';
-import { API_ENDPOINTS } from '@/shared/config/constants';
+import { API_ENDPOINTS, type ModelProvider } from '@/shared/config/constants';
+
+export interface UploadDocumentInput {
+  file: File;
+  modelProvider: ModelProvider;
+}
 
 export interface UploadResponse {
   status: string;
@@ -38,9 +43,10 @@ export interface IndexProgress {
 export function useUploadDocument() {
   const { trigger, isMutating, error } = useSWRMutation(
     API_ENDPOINTS.INDEX.UPLOAD,
-    async (url: string, { arg }: { arg: File }) => {
+    async (url: string, { arg }: { arg: UploadDocumentInput }) => {
       const formData = new FormData();
-      formData.append('file', arg);
+      formData.append('file', arg.file);
+      formData.append('model_provider', arg.modelProvider);
 
       const response = await apiClient.post<UploadResponse>(url, formData, {
         headers: {

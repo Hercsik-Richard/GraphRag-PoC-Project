@@ -7,6 +7,18 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 export const API_REQUEST_TIMEOUT = 60000;
 export const CHAT_REQUEST_TIMEOUT = 900000;
 
+export type ModelProvider = 'ollama' | 'gemini' | 'openrouter';
+
+export const MODEL_PROVIDER_OPTIONS: Array<{
+  value: ModelProvider;
+  label: string;
+  detail: string;
+}> = [
+  { value: 'ollama', label: 'Qwen', detail: 'Ollama' },
+  { value: 'gemini', label: 'Gemini', detail: 'Google' },
+  { value: 'openrouter', label: 'OpenRouter', detail: 'API' },
+];
+
 // API Endpoints
 export const API_ENDPOINTS = {
   // Chat endpoints

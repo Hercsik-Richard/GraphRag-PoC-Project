@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
+from zoneinfo import ZoneInfo
 
 import graphrag.api as api
 import httpx
@@ -103,6 +104,12 @@ class OpenRouterConfigurationError(GraphRAGError):
     pass
 
 
+class GeminiRateLimitError(GraphRAGError):
+    """Exception raised when the local Gemini free-tier guard blocks a request."""
+
+    pass
+
+
 class IndexingError(GraphRAGError):
     """Exception raised during document indexing."""
 
@@ -113,6 +120,227 @@ class QueryError(GraphRAGError):
     """Exception raised during query execution."""
 
     pass
+
+
+class GeminiFreeTierRateLimiter:
+    """Conservative persistent limiter for Gemini free-tier query chat calls."""
+
+    def __init__(
+        self,
+        *,
+        state_path: Path,
+        requests_per_minute: int,
+        tokens_per_minute: int,
+        requests_per_day: int,
+    ) -> None:
+        self.state_path = state_path
+        self.requests_per_minute = max(1, requests_per_minute)
+        self.tokens_per_minute = max(1, tokens_per_minute)
+        self.requests_per_day = max(1, requests_per_day)
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, estimated_tokens: int) -> None:
+        """Wait until the next Gemini request is safely under the configured quotas."""
+        estimated_tokens = max(1, estimated_tokens)
+        if estimated_tokens > self.tokens_per_minute:
+            raise GeminiRateLimitError(
+                "A Gemini query becsült tokenigénye nagyobb, mint a beállított "
+                f"percenkénti token keret ({self.tokens_per_minute}). "
+                "Próbáld Local módban, rövidebb kérdéssel, vagy növeld fizetős kvótán."
+            )
+
+        while True:
+            wait_seconds = 0.0
+            async with self._lock:
+                state = self._load_state()
+                now = time.time()
+                current_minute = int(now // 60)
+                current_day = self._pacific_day_key()
+
+                if state.get("minute") != current_minute:
+                    state["minute"] = current_minute
+                    state["minute_requests"] = 0
+                    state["minute_tokens"] = 0
+                if state.get("day") != current_day:
+                    state["day"] = current_day
+                    state["day_requests"] = 0
+
+                day_requests = int(state.get("day_requests", 0))
+                if day_requests >= self.requests_per_day:
+                    raise GeminiRateLimitError(
+                        "A helyi Gemini free-tier guard elérte a napi query limitet "
+                        f"({self.requests_per_day} kérés/nap). A Google szerint az RPD "
+                        "Pacific time szerinti éjfélkor nullázódik."
+                    )
+
+                minute_requests = int(state.get("minute_requests", 0))
+                minute_tokens = int(state.get("minute_tokens", 0))
+                last_request_at = float(state.get("last_request_at", 0.0))
+                spacing_wait = max(0.0, last_request_at + (60 / self.requests_per_minute) - now)
+                minute_wait = (
+                    ((current_minute + 1) * 60) - now + 0.25
+                    if minute_requests >= self.requests_per_minute
+                    or minute_tokens + estimated_tokens > self.tokens_per_minute
+                    else 0.0
+                )
+                wait_seconds = max(spacing_wait, minute_wait)
+
+                if wait_seconds <= 0:
+                    state["minute_requests"] = minute_requests + 1
+                    state["minute_tokens"] = minute_tokens + estimated_tokens
+                    state["day_requests"] = day_requests + 1
+                    state["last_request_at"] = now
+                    self._save_state(state)
+                    logger.info(
+                        "Gemini free-tier guard reserved query request %s/%s today, "
+                        "%s/%s requests and %s/%s estimated tokens this minute.",
+                        state["day_requests"],
+                        self.requests_per_day,
+                        state["minute_requests"],
+                        self.requests_per_minute,
+                        state["minute_tokens"],
+                        self.tokens_per_minute,
+                    )
+                    return
+
+            logger.info("Gemini free-tier guard sleeping %.1fs before next query call", wait_seconds)
+            await asyncio.sleep(wait_seconds)
+
+    def _pacific_day_key(self) -> str:
+        return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+
+    def _load_state(self) -> dict[str, Any]:
+        try:
+            with self.state_path.open("r", encoding="utf-8") as state_file:
+                state = json.load(state_file)
+                if isinstance(state, dict):
+                    return state
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning("Failed to read Gemini free-tier limiter state: %s", e)
+        return {
+            "minute": int(time.time() // 60),
+            "minute_requests": 0,
+            "minute_tokens": 0,
+            "day": self._pacific_day_key(),
+            "day_requests": 0,
+            "last_request_at": 0.0,
+        }
+
+    def _save_state(self, state: dict[str, Any]) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.state_path.with_suffix(".tmp")
+        with temp_path.open("w", encoding="utf-8") as state_file:
+            json.dump(state, state_file, sort_keys=True)
+        temp_path.replace(self.state_path)
+
+
+class GeminiDailyBudgetGuard:
+    """Persistent shared daily request budget guard for Gemini index jobs."""
+
+    def __init__(self, *, state_path: Path, requests_per_day: int) -> None:
+        self.state_path = state_path
+        self.requests_per_day = max(1, requests_per_day)
+        self._lock = asyncio.Lock()
+
+    async def reserve(self, estimated_requests: int) -> None:
+        """Reserve a conservative number of daily Gemini requests before indexing."""
+        estimated_requests = max(1, estimated_requests)
+        if estimated_requests > self.requests_per_day:
+            raise GeminiRateLimitError(
+                "A dokumentum becsült Gemini indexelési igénye "
+                f"{estimated_requests} kérés, ami nagyobb, mint a napi "
+                f"{self.requests_per_day} RPD limit. Használj kisebb fájlt, "
+                "nagyobb APP_GRAPHRAG_CHUNK_SIZE értéket, vagy Ollama indexelést."
+            )
+
+        async with self._lock:
+            state = self._load_state()
+            current_day = self._pacific_day_key()
+            if state.get("day") != current_day:
+                state = {
+                    "day": current_day,
+                    "day_requests": 0,
+                    "minute": int(time.time() // 60),
+                    "minute_requests": 0,
+                    "minute_tokens": 0,
+                    "last_request_at": 0.0,
+                }
+
+            day_requests = int(state.get("day_requests", 0))
+            if day_requests + estimated_requests > self.requests_per_day:
+                remaining = self.requests_per_day - day_requests
+                raise GeminiRateLimitError(
+                    "A közös Gemini napi guard szerint ma már csak "
+                    f"{remaining} kérés maradt a {self.requests_per_day} RPD keretből, "
+                    f"de ez az indexelés becslés szerint {estimated_requests} kérést igényelne. "
+                    "Várd meg a Pacific time szerinti napi resetet, vagy indexelj kisebb fájlt."
+                )
+
+            state["day_requests"] = day_requests + estimated_requests
+            self._save_state(state)
+            logger.info(
+                "Gemini shared daily guard reserved %s index requests; %s/%s used today.",
+                estimated_requests,
+                state["day_requests"],
+                self.requests_per_day,
+            )
+
+    def _pacific_day_key(self) -> str:
+        return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+
+    def _load_state(self) -> dict[str, Any]:
+        try:
+            with self.state_path.open("r", encoding="utf-8") as state_file:
+                state = json.load(state_file)
+                if isinstance(state, dict):
+                    return state
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning("Failed to read Gemini index daily guard state: %s", e)
+        return {
+            "minute": int(time.time() // 60),
+            "minute_requests": 0,
+            "minute_tokens": 0,
+            "day": self._pacific_day_key(),
+            "day_requests": 0,
+            "last_request_at": 0.0,
+        }
+
+    def _save_state(self, state: dict[str, Any]) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.state_path.with_suffix(".tmp")
+        with temp_path.open("w", encoding="utf-8") as state_file:
+            json.dump(state, state_file, sort_keys=True)
+        temp_path.replace(self.state_path)
+
+
+class RateLimitedChatModel:
+    """Proxy that throttles async chat calls before delegating to GraphRAG's model."""
+
+    def __init__(
+        self,
+        wrapped_model: Any,
+        limiter: GeminiFreeTierRateLimiter,
+        token_estimator: Callable[[tuple[Any, ...], dict[str, Any]], int],
+    ) -> None:
+        self._wrapped_model = wrapped_model
+        self._limiter = limiter
+        self._token_estimator = token_estimator
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped_model, name)
+
+    async def achat(self, *args: Any, **kwargs: Any) -> Any:
+        await self._limiter.acquire(self._token_estimator(args, kwargs))
+        return await self._wrapped_model.achat(*args, **kwargs)
+
+    async def achat_stream(self, *args: Any, **kwargs: Any) -> Any:
+        await self._limiter.acquire(self._token_estimator(args, kwargs))
+        async for chunk in self._wrapped_model.achat_stream(*args, **kwargs):
+            yield chunk
 
 
 class GraphRAGService:
@@ -127,9 +355,11 @@ class GraphRAGService:
         self.lancedb_uri = f"{self.graphrag_root}/output/lancedb"
 
         # Store provider configuration with explicit typing
-        self.index_chat_provider: ModelProvider = settings.get_index_chat_provider()
+        self.default_index_chat_provider: ModelProvider = settings.get_index_chat_provider()
+        self.default_query_chat_provider: ModelProvider = settings.get_query_chat_provider()
+        self.index_chat_provider: ModelProvider = self.default_index_chat_provider
         self.index_embed_provider: ModelProvider = settings.get_index_embed_provider()
-        self.query_chat_provider: ModelProvider = settings.get_query_chat_provider()
+        self.query_chat_provider: ModelProvider = self.default_query_chat_provider
         self.query_embed_provider: ModelProvider = settings.get_query_embed_provider()
         self.index_provider: ModelProvider = self.index_chat_provider
         self.query_provider: ModelProvider = self.query_chat_provider
@@ -168,6 +398,7 @@ class GraphRAGService:
         self._local_search_engine: LocalSearch | None = None
         self._global_search_engine: GlobalSearch | None = None
         self._drift_search_engine: DRIFTSearch | None = None
+        self._query_model_lock = asyncio.Lock()
 
     def _invalidate_cached_index(self) -> None:
         """Clear in-memory GraphRAG objects and query engines after index changes."""
@@ -217,6 +448,13 @@ class GraphRAGService:
         os.environ["GRAPHRAG_CONCURRENT_REQUESTS"] = str(settings.graphrag_concurrent_requests)
         os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
         os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
+        chat_rate_limits = self._index_chat_rate_limits(chat_provider)
+        os.environ["GRAPHRAG_CHAT_REQUESTS_PER_MINUTE"] = str(
+            chat_rate_limits["requests_per_minute"]
+        )
+        os.environ["GRAPHRAG_CHAT_TOKENS_PER_MINUTE"] = str(
+            chat_rate_limits["tokens_per_minute"]
+        )
 
         chat_config = self._provider_env_config(chat_provider, ModelType.Chat)
         embed_config = self._provider_env_config(embed_provider, ModelType.Embedding)
@@ -237,10 +475,24 @@ class GraphRAGService:
         os.environ["GRAPHRAG_API_KEY"] = chat_config["api_key"]
 
         logger.info(
-            "GraphRAG environment configured for index chat=%s, embed=%s",
+            "GraphRAG environment configured for index chat=%s, embed=%s, chat RPM=%s, chat TPM=%s",
             chat_provider,
             embed_provider,
+            chat_rate_limits["requests_per_minute"],
+            chat_rate_limits["tokens_per_minute"],
         )
+
+    def _index_chat_rate_limits(self, provider: ModelProvider) -> dict[str, int]:
+        """Return GraphRAG index chat RPM/TPM limits for the selected provider."""
+        if provider == "gemini" and settings.gemini_free_tier_index_guard_enabled:
+            return {
+                "requests_per_minute": settings.gemini_free_tier_index_rpm,
+                "tokens_per_minute": settings.gemini_free_tier_index_tpm,
+            }
+        return {
+            "requests_per_minute": 1000,
+            "tokens_per_minute": 10_000_000,
+        }
 
     def _provider_env_config(
         self,
@@ -293,7 +545,7 @@ class GraphRAGService:
             model_provider=provider,
             model=provider_config["model"],
             api_base=api_base,
-            max_retries=1 if provider == "ollama" else 3,
+            max_retries=1,
         )
 
     def _init_models(self) -> None:
@@ -306,25 +558,112 @@ class GraphRAGService:
         )
 
         # Initialize models for querying
+        chat_model_name = self._model_cache_key(
+            "local_search_chat",
+            self.query_chat_provider,
+            settings.get_model_name(self.query_chat_provider, "chat"),
+        )
+        embedding_model_name = self._model_cache_key(
+            "local_search_embedding",
+            self.query_embed_provider,
+            settings.get_model_name(self.query_embed_provider, "embedding"),
+        )
+
         self.chat_model = ModelManager().get_or_create_chat_model(
-            name="local_search_chat",
+            name=chat_model_name,
             model_type=ModelType.Chat,
             config=chat_config,
         )
 
         self.text_embedder = ModelManager().get_or_create_embedding_model(
-            name="local_search_embedding",
+            name=embedding_model_name,
             model_type=ModelType.Embedding,
             config=embedding_config,
         )
 
         self.tokenizer = get_tokenizer(chat_config)
+        if self.query_chat_provider == "gemini" and settings.gemini_free_tier_guard_enabled:
+            limiter = GeminiFreeTierRateLimiter(
+                state_path=self.cache_dir / "gemini-free-tier-shared-rate-limit.json",
+                requests_per_minute=settings.gemini_free_tier_query_rpm,
+                tokens_per_minute=settings.gemini_free_tier_query_tpm,
+                requests_per_day=settings.gemini_free_tier_query_rpd,
+            )
+            self.chat_model = RateLimitedChatModel(
+                self.chat_model,
+                limiter,
+                self._estimate_query_chat_call_tokens,
+            )
+            logger.info(
+                "Gemini free-tier guard enabled for query chat: %s RPM, %s TPM, %s RPD",
+                settings.gemini_free_tier_query_rpm,
+                settings.gemini_free_tier_query_tpm,
+                settings.gemini_free_tier_query_rpd,
+            )
 
         logger.info(
             "Models initialized for query chat provider: %s, embedding provider: %s",
             self.query_chat_provider,
             self.query_embed_provider,
         )
+
+    def _model_cache_key(self, prefix: str, provider: ModelProvider, model: str) -> str:
+        """Return a stable ModelManager name for a concrete provider/model pair."""
+        normalized_model = re.sub(r"[^a-zA-Z0-9_-]+", "_", model).strip("_")
+        return f"{prefix}_{provider}_{normalized_model}"
+
+    def _configure_query_chat_provider(self, provider: ModelProvider) -> None:
+        """Switch query-time chat generation to the selected provider."""
+        if provider == self.query_chat_provider:
+            return
+
+        self.query_chat_provider = provider
+        self.query_provider = provider
+        self._init_models()
+        self._local_search_engine = None
+        self._global_search_engine = None
+        self._drift_search_engine = None
+        logger.info("Query chat provider switched to %s", provider)
+
+    def _estimate_query_chat_call_tokens(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> int:
+        """Estimate Gemini input plus reserved output tokens for local throttling."""
+        prompt_tokens = self._estimate_tokens(args) + self._estimate_tokens(kwargs)
+        max_output_tokens = self._extract_max_output_tokens(kwargs)
+        return max(1000, math.ceil(prompt_tokens * 1.1) + max_output_tokens + 100)
+
+    def _estimate_tokens(self, value: Any) -> int:
+        """Best-effort token estimate for prompts passed through GraphRAG."""
+        if value is None:
+            return 0
+        if isinstance(value, str):
+            try:
+                return len(self.tokenizer.encode(value))
+            except Exception:
+                return max(1, math.ceil(len(value) / 4))
+        if isinstance(value, bytes):
+            return max(1, math.ceil(len(value) / 4))
+        if isinstance(value, dict):
+            return sum(
+                self._estimate_tokens(key) + self._estimate_tokens(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, (list, tuple, set)):
+            return sum(self._estimate_tokens(item) for item in value)
+        return 0
+
+    def _extract_max_output_tokens(self, kwargs: dict[str, Any]) -> int:
+        """Return the output-token reserve from direct or nested model parameters."""
+        for key in ("max_tokens", "max_completion_tokens"):
+            value = kwargs.get(key)
+            if isinstance(value, int):
+                return value
+        model_parameters = kwargs.get("model_parameters")
+        if isinstance(model_parameters, dict):
+            for key in ("max_tokens", "max_completion_tokens"):
+                value = model_parameters.get(key)
+                if isinstance(value, int):
+                    return value
+        return 2000
 
     async def check_ollama_health(self) -> bool:
         """
@@ -382,7 +721,12 @@ class GraphRAGService:
             logger.error(f"Failed to verify Ollama models: {e}")
             return False
 
-    async def check_gemini_health(self) -> bool:
+    async def check_gemini_health(
+        self,
+        *,
+        check_chat: bool = True,
+        check_embedding: bool = True,
+    ) -> bool:
         """
         Check if Gemini API is configured and the selected models exist.
 
@@ -395,8 +739,10 @@ class GraphRAGService:
         if not settings.gemini_api_key:
             raise GeminiConfigurationError("Gemini API key not configured")
 
-        await self._verify_gemini_model(settings.gemini_llm_model, "LLM")
-        await self._verify_gemini_model(settings.gemini_embed_model, "embedding")
+        if check_chat:
+            await self._verify_gemini_model(settings.gemini_llm_model, "LLM")
+        if check_embedding:
+            await self._verify_gemini_model(settings.gemini_embed_model, "embedding")
 
         logger.info("Gemini API key and model settings are valid")
         return True
@@ -504,7 +850,7 @@ class GraphRAGService:
             return "Gemini API key expired or invalid. Renew APP_GEMINI_API_KEY and restart the backend."
 
         if (
-            settings.get_index_provider() == "ollama"
+            self.index_provider == "ollama"
             and ("Timeout" in error_text or "timed out" in error_text)
         ):
             return (
@@ -534,7 +880,7 @@ class GraphRAGService:
         if "429" in error_text:
             return "Gemini rate limit reached. Retry later or reduce the input size."
 
-        if "400 Bad Request" in error_text and settings.get_index_provider() == "gemini":
+        if "400 Bad Request" in error_text and self.index_provider == "gemini":
             return "Gemini rejected the indexing request. Check APP_GEMINI_API_KEY and model settings."
 
         return error_text
@@ -559,7 +905,10 @@ class GraphRAGService:
         if check_provider == "ollama":
             return await self.check_ollama_health() and await self.check_ollama_models(model_kind)
         elif check_provider == "gemini":
-            return await self.check_gemini_health()
+            return await self.check_gemini_health(
+                check_chat=model_kind in {"chat", "both"},
+                check_embedding=model_kind in {"embedding", "both"},
+            )
         elif check_provider == "openrouter":
             return await self.check_openrouter_health(
                 check_chat=model_kind in {"chat", "both"},
@@ -618,6 +967,7 @@ class GraphRAGService:
         filename: str,
         content: bytes,
         progress_callback: ProgressCallback | None = None,
+        index_chat_provider: ModelProvider | None = None,
     ) -> dict[str, Any]:
         """
         Index a document with GraphRAG.
@@ -633,6 +983,34 @@ class GraphRAGService:
             IndexingError: If indexing fails.
         """
         try:
+            active_index_chat_provider = index_chat_provider or self.default_index_chat_provider
+            self.index_chat_provider = active_index_chat_provider
+            self.index_provider = active_index_chat_provider
+            self._set_graphrag_env_vars(active_index_chat_provider, self.index_embed_provider)
+            self.config = load_config(self.graphrag_root)
+            logger.info(
+                "Indexing with chat provider %s and embedding provider %s",
+                active_index_chat_provider,
+                self.index_embed_provider,
+            )
+            estimated_total_chunks = self._estimate_chunk_count(content)
+            if (
+                active_index_chat_provider == "gemini"
+                and settings.gemini_free_tier_index_guard_enabled
+            ):
+                estimated_gemini_requests = self._estimate_gemini_index_chat_requests(
+                    estimated_total_chunks
+                )
+                await GeminiDailyBudgetGuard(
+                    state_path=self.cache_dir / "gemini-free-tier-shared-rate-limit.json",
+                    requests_per_day=settings.gemini_free_tier_index_rpd,
+                ).reserve(estimated_gemini_requests)
+                logger.info(
+                    "Gemini index guard accepted job: %s chunks, %s estimated chat requests.",
+                    estimated_total_chunks,
+                    estimated_gemini_requests,
+                )
+
             if progress_callback:
                 progress_callback(
                     5,
@@ -658,7 +1036,6 @@ class GraphRAGService:
             file_path = self.input_dir / filename
             file_path.write_bytes(content)
             logger.info(f"Saved document to {file_path}")
-            estimated_total_chunks = self._estimate_chunk_count(content)
             indexing_log_offset = self._get_indexing_log_offset()
 
             # Run GraphRAG indexing using Python API
@@ -838,6 +1215,19 @@ class GraphRAGService:
 
         return max(1, math.ceil((token_count - overlap) / stride))
 
+    def _estimate_gemini_index_chat_requests(self, estimated_total_chunks: int) -> int:
+        """Conservatively estimate Gemini chat requests used by one GraphRAG index job."""
+        chunk_extraction_requests = estimated_total_chunks * 3
+        entity_summary_requests = max(1, math.ceil(estimated_total_chunks / 2))
+        community_report_requests = max(1, math.ceil(estimated_total_chunks / 4))
+        finalization_margin = 5
+        return (
+            chunk_extraction_requests
+            + entity_summary_requests
+            + community_report_requests
+            + finalization_margin
+        )
+
     def _get_indexing_log_offset(self) -> int:
         """Return the current GraphRAG log size so progress parsing ignores old runs."""
         log_path = self.output_dir / "indexing-engine.log"
@@ -975,6 +1365,7 @@ class GraphRAGService:
         question: str,
         conversation_history: ConversationHistory | None = None,
         search_mode: SearchMode = "auto",
+        query_chat_provider: ModelProvider | None = None,
     ) -> dict[str, Any]:
         """
         Execute a query against the indexed knowledge graph.
@@ -989,6 +1380,18 @@ class GraphRAGService:
         Raises:
             QueryError: If query execution fails.
         """
+        active_query_chat_provider = query_chat_provider or self.default_query_chat_provider
+        async with self._query_model_lock:
+            self._configure_query_chat_provider(active_query_chat_provider)
+            return await self._query_with_active_provider(question, conversation_history, search_mode)
+
+    async def _query_with_active_provider(
+        self,
+        question: str,
+        conversation_history: ConversationHistory | None = None,
+        search_mode: SearchMode = "auto",
+    ) -> dict[str, Any]:
+        """Execute a query using the currently configured chat provider."""
         try:
             resolved_mode, mode_reason = self.route_search_mode(question, search_mode)
             if resolved_mode != "source":

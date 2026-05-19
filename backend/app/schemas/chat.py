@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 SearchMode = Literal["auto", "local", "global", "drift", "source"]
 ResolvedSearchMode = Literal["local", "global", "drift", "source"]
+ModelProvider = Literal["ollama", "gemini", "openrouter"]
 
 
 class ConversationCreateSchema(BaseModel):
@@ -46,6 +47,10 @@ class QueryRequestSchema(BaseModel):
     search_mode: SearchMode = Field(
         "auto",
         description="GraphRAG query mode. Auto routes to local, global, or DRIFT.",
+    )
+    query_model_provider: ModelProvider | None = Field(
+        None,
+        description="Optional chat model provider override for this query.",
     )
 
 
