@@ -320,7 +320,11 @@ async def upload_document(
         active_index_chat_provider = (
             index_chat_provider or model_provider or settings.get_index_chat_provider()
         )
-        active_index_embed_provider = index_embed_provider or settings.get_index_embed_provider()
+        active_index_embed_provider = (
+            index_embed_provider
+            or (model_provider if index_chat_provider is None else None)
+            or settings.get_index_embed_provider()
+        )
         background_tasks.add_task(
             run_indexing_job,
             document_id,

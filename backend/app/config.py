@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     gemini_free_tier_index_rpm: int = 7
     gemini_free_tier_index_tpm: int = 120_000
     gemini_free_tier_index_rpd: int = 500
+    gemini_free_tier_embed_guard_enabled: bool = True
+    gemini_free_tier_embed_rpm: int = 100
+    gemini_free_tier_embed_tpm: int = 30_000
+    gemini_free_tier_embed_rpd: int = 1_000
+    gemini_free_tier_embed_batch_size: int = 16
+    gemini_free_tier_embed_batch_max_tokens: int = 8191
 
     # OpenRouter configuration. Embeddings require a model that OpenRouter exposes through
     # /embeddings; otherwise use Ollama or Gemini for embeddings.

@@ -223,6 +223,12 @@ APP_QUERY_EMBED_PROVIDER=gemini
 APP_GEMINI_API_KEY=your-key
 APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
 APP_GEMINI_EMBED_MODEL=gemini-embedding-001
+APP_GEMINI_FREE_TIER_EMBED_GUARD_ENABLED=true
+APP_GEMINI_FREE_TIER_EMBED_RPM=100
+APP_GEMINI_FREE_TIER_EMBED_TPM=30000
+APP_GEMINI_FREE_TIER_EMBED_RPD=1000
+APP_GEMINI_FREE_TIER_EMBED_BATCH_SIZE=16
+APP_GEMINI_FREE_TIER_EMBED_BATCH_MAX_TOKENS=8191
 ```
 
 Gemini indexelés és query chat Ollama embeddinggel:
@@ -251,6 +257,17 @@ A GraphRAG indexelés sok LLM hívást indíthat, ezért a napi `500 RPD` limit 
 backend indexelés előtt becsült napi keretet foglal. Ha a dokumentum nem fér bele,
 az indexelést leállítja, mielőtt Gemini hívás indulna.
 
+A Gemini embedding free tier külön limitált (`100 RPM`, `30k TPM`, `1000 RPD`).
+A backend ezért az embedding workflow-ra külön guardot használ. A Gemini
+`batchEmbedContents` quota a batchben lévő elemeket is számolja, ezért a GraphRAG
+embedding batch hívások ütemezése szándékosan a publikus RPM limit alatt marad.
+
+Új Gemini embeddinges indexekhez a `gemini-embedding-2` erősebb választás lehet
+nagyobb bemeneti tokenkerettel és modernebb embedding viselkedéssel. A meglévő
+`gemini-embedding-001` indexekkel viszont nem kompatibilis, ezért váltáskor az
+index és query embedding modellt együtt kell átállítani, majd teljesen újra kell
+indexelni.
+
 OpenRouter chat Ollama embeddinggel:
 
 ```env
@@ -275,6 +292,8 @@ APP_GRAPHRAG_REQUEST_TIMEOUT=600.0
 APP_GRAPHRAG_CHUNK_SIZE=1000
 APP_GRAPHRAG_CHUNK_OVERLAP=150
 APP_GRAPHRAG_CLAIM_EXTRACTION_ENABLED=false
+APP_GEMINI_FREE_TIER_EMBED_BATCH_SIZE=16
+APP_GEMINI_FREE_TIER_EMBED_BATCH_MAX_TOKENS=8191
 ```
 
 Részletes provider- és query-mode javaslatok: [docs/graphrag-optimization.md](docs/graphrag-optimization.md).

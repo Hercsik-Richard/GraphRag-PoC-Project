@@ -151,7 +151,7 @@ class QueryError(GraphRAGError):
 
 
 class GeminiFreeTierRateLimiter:
-    """Conservative persistent limiter for Gemini free-tier query chat calls."""
+    """Conservative persistent limiter for Gemini free-tier API calls."""
 
     def __init__(
         self,
@@ -167,14 +167,26 @@ class GeminiFreeTierRateLimiter:
         self.requests_per_day = max(1, requests_per_day)
         self._lock = asyncio.Lock()
 
-    async def acquire(self, estimated_tokens: int) -> None:
+    async def acquire(
+        self,
+        estimated_tokens: int,
+        *,
+        request_count: int = 1,
+        label: str = "query",
+    ) -> None:
         """Wait until the next Gemini request is safely under the configured quotas."""
         estimated_tokens = max(1, estimated_tokens)
+        request_count = max(1, request_count)
         if estimated_tokens > self.tokens_per_minute:
             raise GeminiRateLimitError(
-                "A Gemini query becsült tokenigénye nagyobb, mint a beállított "
+                f"A Gemini {label} becsült tokenigénye nagyobb, mint a beállított "
                 f"percenkénti token keret ({self.tokens_per_minute}). "
-                "Próbáld Local módban, rövidebb kérdéssel, vagy növeld fizetős kvótán."
+                "Próbáld kisebb bemenettel, vagy növeld fizetős kvótán."
+            )
+        if request_count > self.requests_per_day:
+            raise GeminiRateLimitError(
+                f"A Gemini {label} becsült kérésszáma ({request_count}) nagyobb, "
+                f"mint a napi keret ({self.requests_per_day})."
             )
 
         while True:
@@ -194,9 +206,9 @@ class GeminiFreeTierRateLimiter:
                     state["day_requests"] = 0
 
                 day_requests = int(state.get("day_requests", 0))
-                if day_requests >= self.requests_per_day:
+                if day_requests + request_count > self.requests_per_day:
                     raise GeminiRateLimitError(
-                        "A helyi Gemini free-tier guard elérte a napi query limitet "
+                        f"A helyi Gemini free-tier guard elérte a napi {label} limitet "
                         f"({self.requests_per_day} kérés/nap). A Google szerint az RPD "
                         "Pacific time szerinti éjfélkor nullázódik."
                     )
@@ -207,23 +219,24 @@ class GeminiFreeTierRateLimiter:
                 spacing_wait = max(0.0, last_request_at + (60 / self.requests_per_minute) - now)
                 minute_wait = (
                     ((current_minute + 1) * 60) - now + 0.25
-                    if minute_requests >= self.requests_per_minute
+                    if minute_requests + request_count > self.requests_per_minute
                     or minute_tokens + estimated_tokens > self.tokens_per_minute
                     else 0.0
                 )
                 wait_seconds = max(spacing_wait, minute_wait)
 
                 if wait_seconds <= 0:
-                    state["minute_requests"] = minute_requests + 1
+                    state["minute_requests"] = minute_requests + request_count
                     state["minute_tokens"] = minute_tokens + estimated_tokens
-                    state["day_requests"] = day_requests + 1
+                    state["day_requests"] = day_requests + request_count
                     state["last_request_at"] = now
                     self._save_state(state)
                     logger.info(
-                        "Gemini free-tier guard reserved query request %s/%s today, "
+                        "Gemini free-tier guard reserved %s/%s Gemini %s request units today, "
                         "%s/%s requests and %s/%s estimated tokens this minute.",
                         state["day_requests"],
                         self.requests_per_day,
+                        label,
                         state["minute_requests"],
                         self.requests_per_minute,
                         state["minute_tokens"],
@@ -231,7 +244,11 @@ class GeminiFreeTierRateLimiter:
                     )
                     return
 
-            logger.info("Gemini free-tier guard sleeping %.1fs before next query call", wait_seconds)
+            logger.info(
+                "Gemini free-tier guard sleeping %.1fs before next %s call",
+                wait_seconds,
+                label,
+            )
             await asyncio.sleep(wait_seconds)
 
     def _pacific_day_key(self) -> str:
@@ -362,13 +379,54 @@ class RateLimitedChatModel:
         return getattr(self._wrapped_model, name)
 
     async def achat(self, *args: Any, **kwargs: Any) -> Any:
-        await self._limiter.acquire(self._token_estimator(args, kwargs))
+        await self._limiter.acquire(
+            self._token_estimator(args, kwargs),
+            label="query chat",
+        )
         return await self._wrapped_model.achat(*args, **kwargs)
 
     async def achat_stream(self, *args: Any, **kwargs: Any) -> Any:
-        await self._limiter.acquire(self._token_estimator(args, kwargs))
+        await self._limiter.acquire(
+            self._token_estimator(args, kwargs),
+            label="query chat",
+        )
         async for chunk in self._wrapped_model.achat_stream(*args, **kwargs):
             yield chunk
+
+
+class RateLimitedEmbeddingModel:
+    """Proxy that throttles async embedding calls before delegating to GraphRAG's model."""
+
+    def __init__(
+        self,
+        wrapped_model: Any,
+        limiter: GeminiFreeTierRateLimiter,
+        budget_estimator: Callable[[tuple[Any, ...], dict[str, Any]], tuple[int, int]],
+    ) -> None:
+        self._wrapped_model = wrapped_model
+        self._limiter = limiter
+        self._budget_estimator = budget_estimator
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped_model, name)
+
+    async def aembed(self, *args: Any, **kwargs: Any) -> Any:
+        estimated_tokens, request_count = self._budget_estimator(args, kwargs)
+        await self._limiter.acquire(
+            estimated_tokens,
+            request_count=request_count,
+            label="query embedding",
+        )
+        return await self._wrapped_model.aembed(*args, **kwargs)
+
+    async def aembed_batch(self, *args: Any, **kwargs: Any) -> Any:
+        estimated_tokens, request_count = self._budget_estimator(args, kwargs)
+        await self._limiter.acquire(
+            estimated_tokens,
+            request_count=request_count,
+            label="query embedding",
+        )
+        return await self._wrapped_model.aembed_batch(*args, **kwargs)
 
 
 class Gemini3TemperatureGuardChatModel:
@@ -540,11 +598,22 @@ class GraphRAGService:
         os.environ["GRAPHRAG_MAX_RETRIES"] = str(settings.graphrag_max_retries)
         os.environ["GRAPHRAG_MAX_RETRY_WAIT"] = str(settings.graphrag_max_retry_wait)
         chat_rate_limits = self._index_chat_rate_limits(chat_provider)
+        embed_rate_limits = self._index_embedding_rate_limits(embed_provider)
         os.environ["GRAPHRAG_CHAT_REQUESTS_PER_MINUTE"] = str(
             chat_rate_limits["requests_per_minute"]
         )
         os.environ["GRAPHRAG_CHAT_TOKENS_PER_MINUTE"] = str(
             chat_rate_limits["tokens_per_minute"]
+        )
+        os.environ["GRAPHRAG_EMBED_REQUESTS_PER_MINUTE"] = str(
+            embed_rate_limits["requests_per_minute"]
+        )
+        os.environ["GRAPHRAG_EMBED_TOKENS_PER_MINUTE"] = str(
+            embed_rate_limits["tokens_per_minute"]
+        )
+        os.environ["GRAPHRAG_EMBED_BATCH_SIZE"] = str(settings.gemini_free_tier_embed_batch_size)
+        os.environ["GRAPHRAG_EMBED_BATCH_MAX_TOKENS"] = str(
+            settings.gemini_free_tier_embed_batch_max_tokens
         )
 
         chat_config = self._provider_env_config(chat_provider, ModelType.Chat)
@@ -568,12 +637,15 @@ class GraphRAGService:
         os.environ["GRAPHRAG_API_KEY"] = chat_config["api_key"]
 
         logger.info(
-            "GraphRAG environment configured for index chat=%s, embed=%s, chat temperature=%s, chat RPM=%s, chat TPM=%s",
+            "GraphRAG environment configured for index chat=%s, embed=%s, "
+            "chat temperature=%s, chat RPM=%s, chat TPM=%s, embed batch RPM=%s, embed TPM=%s",
             chat_provider,
             embed_provider,
             chat_temperature,
             chat_rate_limits["requests_per_minute"],
             chat_rate_limits["tokens_per_minute"],
+            embed_rate_limits["requests_per_minute"],
+            embed_rate_limits["tokens_per_minute"],
         )
 
     def _ensure_graphrag_chat_temperature_config(
@@ -621,6 +693,25 @@ class GraphRAGService:
             return {
                 "requests_per_minute": settings.gemini_free_tier_index_rpm,
                 "tokens_per_minute": settings.gemini_free_tier_index_tpm,
+            }
+        return {
+            "requests_per_minute": 1000,
+            "tokens_per_minute": 10_000_000,
+        }
+
+    def _index_embedding_rate_limits(self, provider: ModelProvider) -> dict[str, int]:
+        """Return GraphRAG index embedding limits using batch-aware Gemini headroom."""
+        if provider == "gemini" and settings.gemini_free_tier_embed_guard_enabled:
+            batch_size = max(1, settings.gemini_free_tier_embed_batch_size)
+            # Gemini counts batchEmbedContents quota by embedded content item, while GraphRAG's
+            # limiter counts one batch call. Keep batch calls below the true content RPM limit.
+            batch_requests_per_minute = max(
+                1,
+                math.floor((settings.gemini_free_tier_embed_rpm * 0.8) / batch_size),
+            )
+            return {
+                "requests_per_minute": batch_requests_per_minute,
+                "tokens_per_minute": settings.gemini_free_tier_embed_tpm,
             }
         return {
             "requests_per_minute": 1000,
@@ -685,6 +776,9 @@ class GraphRAGService:
                 provider,
                 provider_config["model"],
             )
+        elif provider == "gemini" and settings.gemini_free_tier_embed_guard_enabled:
+            config_values["requests_per_minute"] = settings.gemini_free_tier_embed_rpm
+            config_values["tokens_per_minute"] = settings.gemini_free_tier_embed_tpm
         return LanguageModelConfig(**config_values)
 
     def _init_models(self) -> None:
@@ -740,6 +834,25 @@ class GraphRAGService:
                 settings.gemini_free_tier_query_rpd,
             )
 
+        if self.query_embed_provider == "gemini" and settings.gemini_free_tier_embed_guard_enabled:
+            embedding_limiter = GeminiFreeTierRateLimiter(
+                state_path=self.cache_dir / "gemini-free-tier-embedding-rate-limit.json",
+                requests_per_minute=settings.gemini_free_tier_embed_rpm,
+                tokens_per_minute=settings.gemini_free_tier_embed_tpm,
+                requests_per_day=settings.gemini_free_tier_embed_rpd,
+            )
+            self.text_embedder = RateLimitedEmbeddingModel(
+                self.text_embedder,
+                embedding_limiter,
+                self._estimate_embedding_call_budget,
+            )
+            logger.info(
+                "Gemini free-tier guard enabled for query embeddings: %s RPM, %s TPM, %s RPD",
+                settings.gemini_free_tier_embed_rpm,
+                settings.gemini_free_tier_embed_tpm,
+                settings.gemini_free_tier_embed_rpd,
+            )
+
         query_chat_temperature = self._query_chat_temperature()
         if query_chat_temperature >= 1.0:
             self.chat_model = Gemini3TemperatureGuardChatModel(
@@ -792,6 +905,40 @@ class GraphRAGService:
         prompt_tokens = self._estimate_tokens(args) + self._estimate_tokens(kwargs)
         max_output_tokens = self._extract_max_output_tokens(kwargs)
         return max(1000, math.ceil(prompt_tokens * 1.1) + max_output_tokens + 100)
+
+    def _estimate_embedding_call_budget(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> tuple[int, int]:
+        """Estimate Gemini embedding input tokens and content request units."""
+        estimated_tokens = max(1, self._estimate_tokens(args) + self._estimate_tokens(kwargs))
+        return estimated_tokens, self._estimate_embedding_request_count(args, kwargs)
+
+    def _estimate_embedding_request_count(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> int:
+        """Estimate how many embed_content quota units one embedding call consumes."""
+        for key in ("input", "inputs", "texts", "text_list", "batch"):
+            if key in kwargs:
+                return self._embedding_item_count(kwargs[key])
+        if args:
+            return self._embedding_item_count(args[0])
+        return 1
+
+    def _embedding_item_count(self, value: Any) -> int:
+        if isinstance(value, str | bytes):
+            return 1
+        if isinstance(value, dict):
+            for key in ("input", "inputs", "texts", "text", "content"):
+                if key in value:
+                    return self._embedding_item_count(value[key])
+            return 1
+        if isinstance(value, (list, tuple, set)):
+            return max(1, len(value))
+        return 1
 
     def _estimate_tokens(self, value: Any) -> int:
         """Best-effort token estimate for prompts passed through GraphRAG."""
@@ -1032,6 +1179,15 @@ class GraphRAGService:
                 "APP_GEMINI_LLM_MODEL, or use Ollama/local indexing."
             )
 
+        if "embed_content_free_tier_requests" in error_text or "batchEmbedContents" in error_text:
+            return (
+                "Gemini embedding free-tier quota exceeded. The embedding model is limited to "
+                f"{settings.gemini_free_tier_embed_rpm} RPM, "
+                f"{settings.gemini_free_tier_embed_tpm} TPM, and "
+                f"{settings.gemini_free_tier_embed_rpd} RPD. Wait for the quota reset, "
+                "use Ollama embeddings, reduce the input size, or use a paid quota."
+            )
+
         if "RESOURCE_EXHAUSTED" in error_text or "Quota exceeded" in error_text:
             return "Gemini quota exceeded. Wait for the quota reset, use a paid quota, switch to Ollama, or index a smaller sample."
 
@@ -1159,6 +1315,24 @@ class GraphRAGService:
                     "Gemini index guard accepted job: %s chunks, %s estimated chat requests.",
                     estimated_total_chunks,
                     estimated_gemini_requests,
+                )
+
+            if (
+                active_index_embed_provider == "gemini"
+                and settings.gemini_free_tier_embed_guard_enabled
+            ):
+                estimated_embedding_requests = self._estimate_gemini_index_embedding_requests(
+                    estimated_total_chunks
+                )
+                await GeminiDailyBudgetGuard(
+                    state_path=self.cache_dir / "gemini-free-tier-embedding-rate-limit.json",
+                    requests_per_day=settings.gemini_free_tier_embed_rpd,
+                ).reserve(estimated_embedding_requests)
+                logger.info(
+                    "Gemini embedding guard accepted job: %s chunks, %s estimated "
+                    "embed_content request units.",
+                    estimated_total_chunks,
+                    estimated_embedding_requests,
                 )
 
             if progress_callback:
@@ -1432,6 +1606,19 @@ class GraphRAGService:
             + entity_summary_requests
             + community_report_requests
             + finalization_margin
+        )
+
+    def _estimate_gemini_index_embedding_requests(self, estimated_total_chunks: int) -> int:
+        """Estimate Gemini embed_content request units used by GraphRAG indexing."""
+        text_unit_embeddings = estimated_total_chunks
+        estimated_entity_embeddings = estimated_total_chunks * 28
+        estimated_community_embeddings = max(1, math.ceil(estimated_total_chunks * 1.5))
+        safety_margin = 25
+        return (
+            text_unit_embeddings
+            + estimated_entity_embeddings
+            + estimated_community_embeddings
+            + safety_margin
         )
 
     def _get_indexing_log_offset(self) -> int:

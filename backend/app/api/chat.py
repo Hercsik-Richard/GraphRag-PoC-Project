@@ -136,7 +136,8 @@ async def query_conversation(
             query.question,
             query.search_mode,
             query.query_chat_provider or query.query_model_provider,
-            query.query_embed_provider,
+            query.query_embed_provider
+            or (query.query_model_provider if query.query_chat_provider is None else None),
         )
 
         # Convert to response schema

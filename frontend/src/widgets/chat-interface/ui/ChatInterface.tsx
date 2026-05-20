@@ -211,7 +211,6 @@ function QueryProcessingStatus() {
         <div className="flex items-start gap-4">
           <div className="relative mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <Loader2 className="h-5 w-5 animate-spin" />
-            <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-primary shadow-[0_0_0_4px_hsl(var(--primary)/0.18)]" />
           </div>
 
           <div className="min-w-0 flex-1">

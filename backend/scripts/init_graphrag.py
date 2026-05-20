@@ -45,6 +45,8 @@ models:
     max_retries: ${GRAPHRAG_MAX_RETRIES}
     max_retry_wait: ${GRAPHRAG_MAX_RETRY_WAIT}
     concurrent_requests: ${GRAPHRAG_CONCURRENT_REQUESTS}
+    requests_per_minute: ${GRAPHRAG_EMBED_REQUESTS_PER_MINUTE}
+    tokens_per_minute: ${GRAPHRAG_EMBED_TOKENS_PER_MINUTE}
 
 chunks:
   size: ${GRAPHRAG_CHUNK_SIZE}
@@ -84,6 +86,10 @@ claim_extraction:
 community_reports:
   max_length: 2000
   max_input_length: 12000
+
+embed_text:
+  batch_size: ${GRAPHRAG_EMBED_BATCH_SIZE}
+  batch_max_tokens: ${GRAPHRAG_EMBED_BATCH_MAX_TOKENS}
 
 cluster_graph:
   max_cluster_size: 20
@@ -182,8 +188,28 @@ def create_graphrag_workspace() -> None:
         chat_requests_per_minute = 1000
         chat_tokens_per_minute = 10_000_000
 
+    if (
+        index_embed_provider == "gemini"
+        and settings.gemini_free_tier_embed_guard_enabled
+    ):
+        embed_batch_size = max(1, settings.gemini_free_tier_embed_batch_size)
+        embed_requests_per_minute = max(
+            1,
+            int((settings.gemini_free_tier_embed_rpm * 0.8) // embed_batch_size),
+        )
+        embed_tokens_per_minute = settings.gemini_free_tier_embed_tpm
+    else:
+        embed_requests_per_minute = 1000
+        embed_tokens_per_minute = 10_000_000
+
     os.environ["GRAPHRAG_CHAT_REQUESTS_PER_MINUTE"] = str(chat_requests_per_minute)
     os.environ["GRAPHRAG_CHAT_TOKENS_PER_MINUTE"] = str(chat_tokens_per_minute)
+    os.environ["GRAPHRAG_EMBED_REQUESTS_PER_MINUTE"] = str(embed_requests_per_minute)
+    os.environ["GRAPHRAG_EMBED_TOKENS_PER_MINUTE"] = str(embed_tokens_per_minute)
+    os.environ["GRAPHRAG_EMBED_BATCH_SIZE"] = str(settings.gemini_free_tier_embed_batch_size)
+    os.environ["GRAPHRAG_EMBED_BATCH_MAX_TOKENS"] = str(
+        settings.gemini_free_tier_embed_batch_max_tokens
+    )
     os.environ["GRAPHRAG_CHAT_MODEL_PROVIDER"] = index_chat_provider
     os.environ["GRAPHRAG_CHAT_MODEL"] = chat_config["model"]
     os.environ["GRAPHRAG_CHAT_TEMPERATURE"] = str(

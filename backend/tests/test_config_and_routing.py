@@ -347,6 +347,11 @@ def test_gemini_free_tier_guard_defaults_are_conservative() -> None:
     assert settings.gemini_free_tier_index_rpm == 7
     assert settings.gemini_free_tier_index_tpm == 120_000
     assert settings.gemini_free_tier_index_rpd == 500
+    assert settings.gemini_free_tier_embed_guard_enabled is True
+    assert settings.gemini_free_tier_embed_rpm == 100
+    assert settings.gemini_free_tier_embed_tpm == 30_000
+    assert settings.gemini_free_tier_embed_rpd == 1_000
+    assert settings.gemini_free_tier_embed_batch_size == 16
 
 
 def test_gemini_3_temperature_uses_litellm_safe_default() -> None:
@@ -395,6 +400,36 @@ def test_gemini_free_tier_limiter_blocks_after_daily_budget(tmp_path: Path) -> N
             await limiter.acquire(100)
 
     asyncio.run(reserve_twice())
+
+
+def test_gemini_free_tier_limiter_counts_batch_request_units(tmp_path: Path) -> None:
+    limiter = GeminiFreeTierRateLimiter(
+        state_path=tmp_path / "gemini-embedding-rate-limit.json",
+        requests_per_minute=100,
+        tokens_per_minute=30_000,
+        requests_per_day=10,
+    )
+
+    async def reserve_batch() -> None:
+        await limiter.acquire(1_000, request_count=8, label="query embedding")
+        with pytest.raises(GeminiRateLimitError, match="napi query embedding limitet"):
+            await limiter.acquire(1_000, request_count=3, label="query embedding")
+
+    asyncio.run(reserve_batch())
+
+
+def test_gemini_embedding_batch_rate_limit_scales_by_batch_size() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    limits = service._index_embedding_rate_limits("gemini")
+
+    assert limits == {"requests_per_minute": 5, "tokens_per_minute": 30_000}
+
+
+def test_gemini_index_embedding_request_estimate_is_conservative() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    assert service._estimate_gemini_index_embedding_requests(12) == 391
 
 
 def test_openrouter_provider_requires_api_key() -> None:

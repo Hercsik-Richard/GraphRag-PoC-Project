@@ -38,6 +38,12 @@ APP_QUERY_EMBED_PROVIDER=gemini
 APP_GEMINI_API_KEY=your-key
 APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
 APP_GEMINI_EMBED_MODEL=gemini-embedding-001
+APP_GEMINI_FREE_TIER_EMBED_GUARD_ENABLED=true
+APP_GEMINI_FREE_TIER_EMBED_RPM=100
+APP_GEMINI_FREE_TIER_EMBED_TPM=30000
+APP_GEMINI_FREE_TIER_EMBED_RPD=1000
+APP_GEMINI_FREE_TIER_EMBED_BATCH_SIZE=16
+APP_GEMINI_FREE_TIER_EMBED_BATCH_MAX_TOKENS=8191
 ```
 
 ### Gemini Index And Query Chat With Ollama Embeddings
@@ -65,6 +71,18 @@ APP_GEMINI_FREE_TIER_INDEX_RPD=500
 This keeps embeddings local while using Gemini 3.1 Flash-Lite for GraphRAG index-time
 extraction and query-time answer generation. The runtime guards stay below the configured
 15 RPM / 250k TPM / 500 RPD project limits, and index/query share the same daily counter.
+
+When Gemini is used for embeddings, the embedding model has a separate free-tier quota:
+100 RPM, 30k TPM, and 1000 RPD. GraphRAG calls Gemini embeddings through
+`batchEmbedContents`, but the Gemini quota is charged against the embedded content items,
+not just the outer batch request. The application therefore converts the public embedding
+RPM into a conservative batch RPM before indexing.
+
+For new Gemini embedding indexes, `gemini-embedding-2` is likely the stronger choice:
+it supports a larger input token limit, multimodal inputs, and automatic normalization
+for truncated dimensions. Do not mix it with an existing `gemini-embedding-001` index;
+the embedding spaces are incompatible, so switching requires setting both index and
+query embedding model to `gemini-embedding-2` and re-indexing all documents.
 
 ### OpenRouter Chat With Ollama Embeddings
 
