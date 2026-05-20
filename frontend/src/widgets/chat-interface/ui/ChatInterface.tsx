@@ -14,7 +14,7 @@ import { useConversation } from "@/entities/conversation";
 import type { SearchMode } from "@/entities/message";
 import { MessageBubble } from "@/entities/message";
 import { MessageForm, useSendMessage } from "@/features/send-message";
-import { cn } from "@/shared";
+import { cn, UI_CONSTANTS } from "@/shared";
 import type { ModelProvider } from "@/shared";
 
 interface ChatInterfaceProps {
@@ -22,7 +22,8 @@ interface ChatInterfaceProps {
   onMessageSent?: () => void;
   onEntityClick?: (entityId: string) => void;
   onRelationshipClick?: (source: string, target: string) => void;
-  queryModelProvider: ModelProvider;
+  queryChatProvider: ModelProvider;
+  queryEmbedProvider: ModelProvider;
 }
 
 export function ChatInterface({
@@ -30,7 +31,8 @@ export function ChatInterface({
   onMessageSent,
   onEntityClick,
   onRelationshipClick,
-  queryModelProvider,
+  queryChatProvider,
+  queryEmbedProvider,
 }: ChatInterfaceProps) {
   const {
     messages,
@@ -39,6 +41,7 @@ export function ChatInterface({
   } = useConversation(conversationId);
   const { sendMessage, isSending } = useSendMessage(conversationId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -48,20 +51,31 @@ export function ChatInterface({
   const handleSendMessage = async (content: string, searchMode: SearchMode) => {
     if (!conversationId) return;
 
+    if (content.length > UI_CONSTANTS.MAX_MESSAGE_LENGTH) {
+      setSendError(
+        `A kérdés legfeljebb ${UI_CONSTANTS.MAX_MESSAGE_LENGTH} karakter lehet. Rövidítsd le, vagy bontsd több kérdésre.`
+      );
+      throw new Error("Message is too long");
+    }
+
+    setSendError(null);
     try {
       await sendMessage({
         question: content,
         search_mode: searchMode,
-        query_model_provider: queryModelProvider,
+        query_chat_provider: queryChatProvider,
+        query_embed_provider: queryEmbedProvider,
       });
       await mutate(); // Refresh messages after the backend saved the answer
       onMessageSent?.();
     } catch (error) {
       console.error("Failed to send message:", error);
+      setSendError(formatSendError(error));
       await mutate();
       window.setTimeout(() => {
         void mutate();
       }, 5000);
+      throw error;
     }
   };
 
@@ -124,10 +138,26 @@ export function ChatInterface({
           onSubmit={handleSendMessage}
           isLoading={isSending}
           disabled={!conversationId}
+          errorMessage={sendError}
         />
       </div>
     </div>
   );
+}
+
+function formatSendError(error: unknown) {
+  const maybeAxiosError = error as {
+    response?: { status?: number; data?: { detail?: unknown; message?: unknown } };
+    message?: string;
+  };
+
+  if (maybeAxiosError.response?.status === 422) {
+    return `A kérdés túl hosszú vagy hibás formátumú. Maximum ${UI_CONSTANTS.MAX_MESSAGE_LENGTH} karaktert küldj.`;
+  }
+  if (maybeAxiosError.response?.status) {
+    return `A backend nem tudta feldolgozni az üzenetet (${maybeAxiosError.response.status}).`;
+  }
+  return maybeAxiosError.message || "Nem sikerült elküldeni az üzenetet.";
 }
 
 const PROCESSING_STAGES = [

@@ -8,7 +8,8 @@ import { API_ENDPOINTS, type ModelProvider } from '@/shared/config/constants';
 
 export interface UploadDocumentInput {
   file: File;
-  modelProvider: ModelProvider;
+  indexChatProvider: ModelProvider;
+  indexEmbedProvider: ModelProvider;
 }
 
 export interface UploadResponse {
@@ -75,7 +76,8 @@ export function useUploadDocument() {
     async (url: string, { arg }: { arg: UploadDocumentInput }) => {
       const formData = new FormData();
       formData.append('file', arg.file);
-      formData.append('model_provider', arg.modelProvider);
+      formData.append('index_chat_provider', arg.indexChatProvider);
+      formData.append('index_embed_provider', arg.indexEmbedProvider);
 
       const response = await apiClient.post<UploadResponse>(url, formData, {
         headers: {

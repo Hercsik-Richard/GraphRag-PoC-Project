@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     retrieved_entities JSON,
     retrieved_relationships JSON,
+    retrieved_sources JSON,
     search_mode_used VARCHAR(20),
     search_mode_reason TEXT
 );
@@ -44,6 +45,7 @@ ON messages(conversation_id, created_at);
 ALTER_MESSAGES_SEARCH_METADATA = """
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_mode_used VARCHAR(20);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_mode_reason TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS retrieved_sources JSON;
 """
 
 CREATE_INDEXED_DOCUMENTS_TABLE = """

@@ -16,6 +16,13 @@ import { useGraphData, useGraphStats, type GraphStats } from "@/entities/graph-n
 import { cn, MODEL_PROVIDER_OPTIONS, type ModelProvider } from "@/shared";
 
 const MODEL_STORAGE_KEYS = {
+  indexChat: "graphrag-index-chat-provider",
+  indexEmbed: "graphrag-index-embed-provider",
+  queryChat: "graphrag-query-chat-provider",
+  queryEmbed: "graphrag-query-embed-provider",
+} as const;
+
+const LEGACY_MODEL_STORAGE_KEYS = {
   index: "graphrag-index-model-provider",
   query: "graphrag-query-model-provider",
 } as const;
@@ -43,11 +50,23 @@ export function ChatPage() {
   >(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isGraphOpen, setIsGraphOpen] = useState(false);
-  const [indexModelProvider, setIndexModelProvider] = useState<ModelProvider>(() =>
-    readSavedModelProvider(MODEL_STORAGE_KEYS.index, "ollama")
+  const [indexChatProvider, setIndexChatProvider] = useState<ModelProvider>(() =>
+    readSavedModelProvider(
+      MODEL_STORAGE_KEYS.indexChat,
+      readSavedModelProvider(LEGACY_MODEL_STORAGE_KEYS.index, "ollama")
+    )
   );
-  const [queryModelProvider, setQueryModelProvider] = useState<ModelProvider>(() =>
-    readSavedModelProvider(MODEL_STORAGE_KEYS.query, "ollama")
+  const [indexEmbedProvider, setIndexEmbedProvider] = useState<ModelProvider>(() =>
+    readSavedModelProvider(MODEL_STORAGE_KEYS.indexEmbed, "ollama")
+  );
+  const [queryChatProvider, setQueryChatProvider] = useState<ModelProvider>(() =>
+    readSavedModelProvider(
+      MODEL_STORAGE_KEYS.queryChat,
+      readSavedModelProvider(LEGACY_MODEL_STORAGE_KEYS.query, "ollama")
+    )
+  );
+  const [queryEmbedProvider, setQueryEmbedProvider] = useState<ModelProvider>(() =>
+    readSavedModelProvider(MODEL_STORAGE_KEYS.queryEmbed, "ollama")
   );
   const { mutate: refreshGraph } = useGraphData();
   const { stats: graphStats, mutate: refreshGraphStats } = useGraphStats();
@@ -69,12 +88,20 @@ export function ChatPage() {
   }, [theme]);
 
   useEffect(() => {
-    window.localStorage.setItem(MODEL_STORAGE_KEYS.index, indexModelProvider);
-  }, [indexModelProvider]);
+    window.localStorage.setItem(MODEL_STORAGE_KEYS.indexChat, indexChatProvider);
+  }, [indexChatProvider]);
 
   useEffect(() => {
-    window.localStorage.setItem(MODEL_STORAGE_KEYS.query, queryModelProvider);
-  }, [queryModelProvider]);
+    window.localStorage.setItem(MODEL_STORAGE_KEYS.indexEmbed, indexEmbedProvider);
+  }, [indexEmbedProvider]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MODEL_STORAGE_KEYS.queryChat, queryChatProvider);
+  }, [queryChatProvider]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MODEL_STORAGE_KEYS.queryEmbed, queryEmbedProvider);
+  }, [queryEmbedProvider]);
 
   const refreshGraphState = useCallback(async () => {
     await Promise.all([refreshGraph(), refreshGraphStats(), refreshIndexStatus()]);
@@ -128,7 +155,7 @@ export function ChatPage() {
 
   return (
     <div className="min-h-screen w-full bg-linear-to-br from-background via-muted/45 to-primary/10 text-foreground">
-      <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10">
+      <div className="mx-auto flex min-h-screen max-w-[96rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10">
         <GraphStatusBar
           activeDocument={activeDocument}
           graphStats={graphStats}
@@ -147,10 +174,14 @@ export function ChatPage() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <ModelTaskSelector
-              indexModelProvider={indexModelProvider}
-              queryModelProvider={queryModelProvider}
-              onIndexModelProviderChange={setIndexModelProvider}
-              onQueryModelProviderChange={setQueryModelProvider}
+              indexChatProvider={indexChatProvider}
+              indexEmbedProvider={indexEmbedProvider}
+              queryChatProvider={queryChatProvider}
+              queryEmbedProvider={queryEmbedProvider}
+              onIndexChatProviderChange={setIndexChatProvider}
+              onIndexEmbedProviderChange={setIndexEmbedProvider}
+              onQueryChatProviderChange={setQueryChatProvider}
+              onQueryEmbedProviderChange={setQueryEmbedProvider}
             />
             <button
               type="button"
@@ -180,7 +211,8 @@ export function ChatPage() {
               Graph view
             </button>
             <UploadButton
-              modelProvider={indexModelProvider}
+              indexChatProvider={indexChatProvider}
+              indexEmbedProvider={indexEmbedProvider}
               onUploadComplete={handleUploadComplete}
             />
           </div>
@@ -200,7 +232,8 @@ export function ChatPage() {
             <div className="flex h-full flex-col rounded-xl border border-border/70 bg-card/95 shadow-[0_20px_42px_rgba(0,0,0,0.16)]">
               <ChatInterface
                 conversationId={selectedConversationId}
-                queryModelProvider={queryModelProvider}
+                queryChatProvider={queryChatProvider}
+                queryEmbedProvider={queryEmbedProvider}
                 onMessageSent={() => void refreshGraph()}
                 onEntityClick={handleEntityClick}
                 onRelationshipClick={handleRelationshipClick}
@@ -217,7 +250,8 @@ export function ChatPage() {
         onNodeSelect={handleNodeSelect}
         selectedNodeId={selectedNodeId}
         conversationId={selectedConversationId}
-        queryModelProvider={queryModelProvider}
+        queryChatProvider={queryChatProvider}
+        queryEmbedProvider={queryEmbedProvider}
         onEntityClick={handleEntityClick}
         onRelationshipClick={handleRelationshipClick}
         onMessageSent={() => void refreshGraph()}
@@ -296,32 +330,58 @@ function GraphStatusBar({
 }
 
 function ModelTaskSelector({
-  indexModelProvider,
-  queryModelProvider,
-  onIndexModelProviderChange,
-  onQueryModelProviderChange,
+  indexChatProvider,
+  indexEmbedProvider,
+  queryChatProvider,
+  queryEmbedProvider,
+  onIndexChatProviderChange,
+  onIndexEmbedProviderChange,
+  onQueryChatProviderChange,
+  onQueryEmbedProviderChange,
 }: {
-  indexModelProvider: ModelProvider;
-  queryModelProvider: ModelProvider;
-  onIndexModelProviderChange: (provider: ModelProvider) => void;
-  onQueryModelProviderChange: (provider: ModelProvider) => void;
+  indexChatProvider: ModelProvider;
+  indexEmbedProvider: ModelProvider;
+  queryChatProvider: ModelProvider;
+  queryEmbedProvider: ModelProvider;
+  onIndexChatProviderChange: (provider: ModelProvider) => void;
+  onIndexEmbedProviderChange: (provider: ModelProvider) => void;
+  onQueryChatProviderChange: (provider: ModelProvider) => void;
+  onQueryEmbedProviderChange: (provider: ModelProvider) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/80 px-3 py-2">
       <TaskModelSelect
-        id="index-model-provider"
+        id="index-chat-provider"
         icon={<Database className="h-4 w-4" />}
         label="Index"
-        value={indexModelProvider}
-        onChange={onIndexModelProviderChange}
+        value={indexChatProvider}
+        onChange={onIndexChatProviderChange}
+        title="Controls the model used for GraphRAG extraction and summarization during indexing."
+      />
+      <TaskModelSelect
+        id="index-embed-provider"
+        icon={<Database className="h-4 w-4" />}
+        label="Index embed"
+        value={indexEmbedProvider}
+        onChange={onIndexEmbedProviderChange}
+        title="Controls the embedding model used to build the vector index."
       />
       <div className="h-7 w-px bg-border/70" />
       <TaskModelSelect
-        id="query-model-provider"
+        id="query-chat-provider"
         icon={<Search className="h-4 w-4" />}
         label="Query"
-        value={queryModelProvider}
-        onChange={onQueryModelProviderChange}
+        value={queryChatProvider}
+        onChange={onQueryChatProviderChange}
+        title="Controls the model used to generate query answers."
+      />
+      <TaskModelSelect
+        id="query-embed-provider"
+        icon={<Search className="h-4 w-4" />}
+        label="Query embed"
+        value={queryEmbedProvider}
+        onChange={onQueryEmbedProviderChange}
+        title="Controls the embedding model used for query-time vector retrieval."
       />
     </div>
   );
@@ -333,22 +393,28 @@ function TaskModelSelect({
   label,
   value,
   onChange,
+  title,
 }: {
   id: string;
   icon: ReactNode;
   label: string;
   value: ModelProvider;
   onChange: (provider: ModelProvider) => void;
+  title?: string;
 }) {
   return (
-    <label htmlFor={id} className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+    <label
+      htmlFor={id}
+      title={title}
+      className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"
+    >
       <span className="text-primary">{icon}</span>
       <span>{label}</span>
       <select
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value as ModelProvider)}
-        className="h-8 rounded-md border border-border/70 bg-card px-2 text-xs font-semibold text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 rounded-md border border-border/70 bg-card px-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {MODEL_PROVIDER_OPTIONS.map((option) => (
           <option key={option.value} value={option.value}>
@@ -367,7 +433,8 @@ function GraphDrawer({
   onNodeSelect,
   selectedNodeId,
   conversationId,
-  queryModelProvider,
+  queryChatProvider,
+  queryEmbedProvider,
   onEntityClick,
   onRelationshipClick,
   onMessageSent,
@@ -378,7 +445,8 @@ function GraphDrawer({
   onNodeSelect: (nodeId: string | null) => void;
   selectedNodeId: string | null;
   conversationId: string | null;
-  queryModelProvider: ModelProvider;
+  queryChatProvider: ModelProvider;
+  queryEmbedProvider: ModelProvider;
   onEntityClick: (entityId: string) => void;
   onRelationshipClick: (source: string, target: string) => void;
   onMessageSent: () => void;
@@ -409,7 +477,8 @@ function GraphDrawer({
         >
           <ChatInterface
             conversationId={conversationId}
-            queryModelProvider={queryModelProvider}
+            queryChatProvider={queryChatProvider}
+            queryEmbedProvider={queryEmbedProvider}
             onEntityClick={onEntityClick}
             onRelationshipClick={onRelationshipClick}
             onMessageSent={onMessageSent}

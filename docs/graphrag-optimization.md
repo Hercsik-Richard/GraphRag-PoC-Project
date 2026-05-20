@@ -8,8 +8,9 @@
 - `Global`: best for full-dataset summaries, themes, trends, and broad patterns.
 - `DRIFT`: best for multi-hop questions, relationships between multiple actors, and "why/how are these connected" questions.
 - `Source`: best for source-bound extraction where the answer must only use relationships explicitly stated in the uploaded text.
+- `Hybrid`: best for source-bound analytical synthesis. It combines Local graph context with ranked raw text-unit excerpts and asks the model to cite major claims with `[S1]`, `[S2]`, etc.
 
-Manual mode selection in the chat UI overrides the router. API clients can set `search_mode` to `auto`, `local`, `global`, `drift`, or `source` on `POST /api/chat/conversations/{id}/query`.
+Manual mode selection in the chat UI overrides the router. API clients can set `search_mode` to `auto`, `local`, `global`, `drift`, `source`, or `hybrid` on `POST /api/chat/conversations/{id}/query`.
 
 ## Provider Profiles
 
@@ -121,3 +122,24 @@ Graph extraction uses broader entity types: `person`, `organization`, `geo`, `ev
 - Split very large corpora into coherent files before upload.
 - Reindex after provider/model or chunking changes.
 - Check `GET /api/graph/diagnostics` after indexing for low relationship density, isolated nodes, and weak community structure.
+
+## Source-Grounded Analytical Test Profile
+
+For tests like the Einstein Wikipedia analysis, use `Hybrid` mode or let `Auto` route source-bound analytical prompts to `Hybrid`.
+
+Recommended quality profile:
+
+```env
+APP_INDEX_CHAT_PROVIDER=gemini
+APP_QUERY_CHAT_PROVIDER=gemini
+APP_GRAPHRAG_CHUNK_SIZE=900
+APP_GRAPHRAG_CHUNK_OVERLAP=200
+```
+
+Keep the index and query embedding provider/model identical. For quality experiments, enable:
+
+```env
+APP_GRAPHRAG_CLAIM_EXTRACTION_ENABLED=true
+```
+
+Claim extraction is intentionally optional because it increases indexing cost and should be evaluated per corpus.

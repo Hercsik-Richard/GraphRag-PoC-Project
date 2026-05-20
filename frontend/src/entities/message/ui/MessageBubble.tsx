@@ -8,6 +8,7 @@ import type {
   Message,
   RetrievedEntity,
   RetrievedRelationship,
+  RetrievedSource,
 } from "@/entities/message";
 import { MessageCitations } from "./MessageCitations";
 
@@ -74,6 +75,7 @@ export function MessageBubble({
           <MessageCitations
             entities={message.retrieved_entities}
             relationships={message.retrieved_relationships}
+            sources={message.retrieved_sources}
             onEntityClick={onEntityClick}
             onRelationshipClick={onRelationshipClick}
           />
@@ -114,7 +116,8 @@ function formatMessageForCopy(message: Message) {
   const parts = [message.content.trim()];
   const sources = formatSources(
     message.retrieved_entities,
-    message.retrieved_relationships
+    message.retrieved_relationships,
+    message.retrieved_sources
   );
 
   if (sources) {
@@ -126,10 +129,24 @@ function formatMessageForCopy(message: Message) {
 
 function formatSources(
   entities: RetrievedEntity[] | null | undefined = [],
-  relationships: RetrievedRelationship[] | null | undefined = []
+  relationships: RetrievedRelationship[] | null | undefined = [],
+  sources: RetrievedSource[] | null | undefined = []
 ) {
-  const safeEntities = entities ?? [];
-  const safeRelationships = relationships ?? [];
+  const safeEntities = (entities ?? []).slice(0, 8);
+  const safeRelationships = (relationships ?? []).slice(0, 8);
+  const safeSources = (sources ?? []).slice(0, 8);
+
+  const sourceLines = safeSources.map((source, idx) => {
+    const displayIndex = source.id || `S${idx + 1}`;
+    const details = [
+      source.text_unit_id && `text unit: ${source.text_unit_id}`,
+      source.excerpt,
+    ].filter(Boolean);
+
+    return `- [${displayIndex}] ${source.source}${
+      details.length ? ` (${details.join("; ")})` : ""
+    }`;
+  });
 
   const entityLines = safeEntities.map((entity, idx) => {
     const displayIndex = entity.index !== undefined ? entity.index : idx;
@@ -155,5 +172,5 @@ function formatSources(
     }`;
   });
 
-  return [...entityLines, ...relationshipLines].join("\n");
+  return [...sourceLines, ...entityLines, ...relationshipLines].join("\n");
 }

@@ -183,6 +183,17 @@ class Settings(BaseSettings):
             return self.gemini_llm_model if model_kind == "chat" else self.gemini_embed_model
         return self.openrouter_llm_model if model_kind == "chat" else self.openrouter_embed_model
 
+    def get_active_provider_roles(
+        self,
+    ) -> dict[str, tuple[ModelProvider, Literal["chat", "embedding"]]]:
+        """Return only providers actively configured for index/query roles."""
+        return {
+            "index_chat": (self.get_index_chat_provider(), "chat"),
+            "index_embedding": (self.get_index_embed_provider(), "embedding"),
+            "query_chat": (self.get_query_chat_provider(), "chat"),
+            "query_embedding": (self.get_query_embed_provider(), "embedding"),
+        }
+
     def embedding_config_matches_index(self) -> bool:
         """Return whether query embeddings match the embedding model used for indexing."""
         return (

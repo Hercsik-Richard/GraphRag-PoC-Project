@@ -6,8 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-SearchMode = Literal["auto", "local", "global", "drift", "source"]
-ResolvedSearchMode = Literal["local", "global", "drift", "source"]
+SearchMode = Literal["auto", "local", "global", "drift", "source", "hybrid"]
+ResolvedSearchMode = Literal["local", "global", "drift", "source", "hybrid"]
 ModelProvider = Literal["ollama", "gemini", "openrouter"]
 
 
@@ -36,6 +36,7 @@ class MessageSchema(BaseModel):
     created_at: datetime
     retrieved_entities: list[dict[str, Any]] | None = None
     retrieved_relationships: list[dict[str, Any]] | None = None
+    retrieved_sources: list[dict[str, Any]] | None = None
     search_mode_used: ResolvedSearchMode | None = None
     search_mode_reason: str | None = None
 
@@ -46,11 +47,19 @@ class QueryRequestSchema(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000, description="User question")
     search_mode: SearchMode = Field(
         "auto",
-        description="GraphRAG query mode. Auto routes to local, global, or DRIFT.",
+        description="GraphRAG query mode. Auto routes to local, global, DRIFT, source, or hybrid.",
     )
     query_model_provider: ModelProvider | None = Field(
         None,
+        description="Deprecated alias for query_chat_provider.",
+    )
+    query_chat_provider: ModelProvider | None = Field(
+        None,
         description="Optional chat model provider override for this query.",
+    )
+    query_embed_provider: ModelProvider | None = Field(
+        None,
+        description="Optional embedding model provider override for this query.",
     )
 
 
@@ -59,6 +68,7 @@ class RetrievedGraphSchema(BaseModel):
 
     entities: list[dict[str, Any]] = Field(default_factory=list)
     relationships: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class QueryResponseSchema(BaseModel):

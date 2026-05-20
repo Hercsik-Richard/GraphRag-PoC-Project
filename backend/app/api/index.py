@@ -157,7 +157,8 @@ async def run_indexing_job(
     document_id: UUID,
     filename: str,
     content: bytes,
-    index_model_provider: ModelProvider,
+    index_chat_provider: ModelProvider,
+    index_embed_provider: ModelProvider,
 ) -> None:
     """Run one GraphRAG indexing job in the background."""
     async with index_lock:
@@ -189,15 +190,16 @@ async def run_indexing_job(
                     phase_progress=phase_progress,
                 )
 
-            index_provider = index_model_provider
-            index_embed_provider = settings.get_index_embed_provider()
             update_index_job(
                 document_id,
                 status="indexing",
                 progress=5,
-                message=f"Checking {index_provider} chat and {index_embed_provider} embedding availability",
+                message=(
+                    f"Checking {index_chat_provider} chat and "
+                    f"{index_embed_provider} embedding availability"
+                ),
             )
-            await graphrag_service.check_provider_health(index_provider, model_kind="chat")
+            await graphrag_service.check_provider_health(index_chat_provider, model_kind="chat")
             await graphrag_service.check_provider_health(
                 index_embed_provider,
                 model_kind="embedding",
@@ -207,7 +209,8 @@ async def run_indexing_job(
                 filename,
                 content,
                 progress_callback=update_progress,
-                index_chat_provider=index_model_provider,
+                index_chat_provider=index_chat_provider,
+                index_embed_provider=index_embed_provider,
             )
 
             await update_document_row(
@@ -245,6 +248,8 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     model_provider: ModelProvider | None = Form(None),
+    index_chat_provider: ModelProvider | None = Form(None),
+    index_embed_provider: ModelProvider | None = Form(None),
     db: AsyncSession = Depends(get_db_session),
 ) -> UploadResponseSchema:
     """
@@ -312,15 +317,24 @@ async def upload_document(
         )
         await db.commit()
 
-        index_model_provider = model_provider or settings.get_index_chat_provider()
+        active_index_chat_provider = (
+            index_chat_provider or model_provider or settings.get_index_chat_provider()
+        )
+        active_index_embed_provider = index_embed_provider or settings.get_index_embed_provider()
         background_tasks.add_task(
             run_indexing_job,
             document_id,
             file.filename,
             content,
-            index_model_provider,
+            active_index_chat_provider,
+            active_index_embed_provider,
         )
-        logger.info("Queued indexing job for %s with %s", file.filename, index_model_provider)
+        logger.info(
+            "Queued indexing job for %s with chat=%s, embedding=%s",
+            file.filename,
+            active_index_chat_provider,
+            active_index_embed_provider,
+        )
 
         return UploadResponseSchema(
             status="queued",

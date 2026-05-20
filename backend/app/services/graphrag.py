@@ -79,8 +79,8 @@ ProgressCallback = Callable[
     None,
 ]
 
-SearchMode = Literal["auto", "local", "global", "drift", "source"]
-ResolvedSearchMode = Literal["local", "global", "drift", "source"]
+SearchMode = Literal["auto", "local", "global", "drift", "source", "hybrid"]
+ResolvedSearchMode = Literal["local", "global", "drift", "source", "hybrid"]
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,19 @@ class SourceHit:
     description: str
     evidence_quote: str
     text_unit_id: str
+
+
+@dataclass(frozen=True)
+class SourceEvidence:
+    """Ranked raw text-unit evidence for source-grounded answers."""
+
+    id: str
+    text_unit_id: str
+    source: str
+    excerpt: str
+    score: float
+    index: int
+    document_ids: list[str] | None = None
 
 
 class GraphRAGError(Exception):
@@ -462,6 +475,7 @@ class GraphRAGService:
         self._global_search_engine: GlobalSearch | None = None
         self._drift_search_engine: DRIFTSearch | None = None
         self._query_model_lock = asyncio.Lock()
+        self._document_source_labels_cache: dict[str, str] | None = None
 
     def _invalidate_cached_index(self) -> None:
         """Clear in-memory GraphRAG objects and query engines after index changes."""
@@ -475,6 +489,7 @@ class GraphRAGService:
         self._local_search_engine = None
         self._global_search_engine = None
         self._drift_search_engine = None
+        self._document_source_labels_cache = None
 
     def _prepare_workspace_for_indexing(self) -> None:
         """Optionally reset corpus and GraphRAG outputs before a new indexing run."""
@@ -747,18 +762,30 @@ class GraphRAGService:
         normalized_model = re.sub(r"[^a-zA-Z0-9_-]+", "_", model).strip("_")
         return f"{prefix}_{provider}_{normalized_model}"
 
-    def _configure_query_chat_provider(self, provider: ModelProvider) -> None:
-        """Switch query-time chat generation to the selected provider."""
-        if provider == self.query_chat_provider:
+    def _configure_query_providers(
+        self,
+        chat_provider: ModelProvider,
+        embed_provider: ModelProvider,
+    ) -> None:
+        """Switch query-time chat and embedding providers."""
+        if (
+            chat_provider == self.query_chat_provider
+            and embed_provider == self.query_embed_provider
+        ):
             return
 
-        self.query_chat_provider = provider
-        self.query_provider = provider
+        self.query_chat_provider = chat_provider
+        self.query_embed_provider = embed_provider
+        self.query_provider = chat_provider
         self._init_models()
         self._local_search_engine = None
         self._global_search_engine = None
         self._drift_search_engine = None
-        logger.info("Query chat provider switched to %s", provider)
+        logger.info(
+            "Query providers switched to chat=%s, embedding=%s",
+            chat_provider,
+            embed_provider,
+        )
 
     def _estimate_query_chat_call_tokens(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> int:
         """Estimate Gemini input plus reserved output tokens for local throttling."""
@@ -1053,49 +1080,30 @@ class GraphRAGService:
 
     async def verify_models(self) -> dict[str, bool]:
         """
-        Verify required models are available for the query provider.
+        Verify required models are available for active query roles only.
 
         Returns:
             dict: Model availability status.
         """
-        if self.query_chat_provider == "gemini" or self.query_embed_provider == "gemini":
-            has_key = bool(settings.gemini_api_key)
-            return {
-                "llm": has_key if self.query_chat_provider == "gemini" else True,
-                "embedding": has_key if self.query_embed_provider == "gemini" else True,
-            }
-
-        if self.query_chat_provider == "openrouter" or self.query_embed_provider == "openrouter":
-            has_key = bool(settings.openrouter_api_key)
-            return {
-                "llm": has_key if self.query_chat_provider == "openrouter" else True,
-                "embedding": has_key if self.query_embed_provider == "openrouter" else True,
-            }
-
-        # For Ollama, check if models are pulled
-        if not settings.ollama_base_url:
-            return {"llm": False, "embedding": False}
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{settings.ollama_base_url}/api/tags")
-                if response.status_code != 200:
-                    return {"llm": False, "embedding": False}
-
-                data = response.json()
-                available_models = [model["name"] for model in data.get("models", [])]
-
-                llm_available = any(
-                    settings.ollama_llm_model in model for model in available_models
+        async def role_available(
+            provider: ModelProvider,
+            model_kind: Literal["chat", "embedding"],
+        ) -> bool:
+            try:
+                return await self.check_provider_health(provider, model_kind=model_kind)
+            except Exception as e:
+                logger.warning(
+                    "Active query %s provider %s is unavailable: %s",
+                    model_kind,
+                    provider,
+                    e,
                 )
-                embed_available = any(
-                    settings.ollama_embed_model in model for model in available_models
-                )
+                return False
 
-                return {"llm": llm_available, "embedding": embed_available}
-        except Exception as e:
-            logger.error(f"Failed to verify models: {e}")
-            return {"llm": False, "embedding": False}
+        return {
+            "llm": await role_available(self.query_chat_provider, "chat"),
+            "embedding": await role_available(self.query_embed_provider, "embedding"),
+        }
 
     async def index_document(
         self,
@@ -1103,6 +1111,7 @@ class GraphRAGService:
         content: bytes,
         progress_callback: ProgressCallback | None = None,
         index_chat_provider: ModelProvider | None = None,
+        index_embed_provider: ModelProvider | None = None,
     ) -> dict[str, Any]:
         """
         Index a document with GraphRAG.
@@ -1119,9 +1128,11 @@ class GraphRAGService:
         """
         try:
             active_index_chat_provider = index_chat_provider or self.default_index_chat_provider
+            active_index_embed_provider = index_embed_provider or settings.get_index_embed_provider()
             self.index_chat_provider = active_index_chat_provider
+            self.index_embed_provider = active_index_embed_provider
             self.index_provider = active_index_chat_provider
-            self._set_graphrag_env_vars(active_index_chat_provider, self.index_embed_provider)
+            self._set_graphrag_env_vars(active_index_chat_provider, active_index_embed_provider)
             self._ensure_graphrag_chat_temperature_config(
                 active_index_chat_provider,
                 settings.get_model_name(active_index_chat_provider, "chat"),
@@ -1130,7 +1141,7 @@ class GraphRAGService:
             logger.info(
                 "Indexing with chat provider %s and embedding provider %s",
                 active_index_chat_provider,
-                self.index_embed_provider,
+                active_index_embed_provider,
             )
             estimated_total_chunks = self._estimate_chunk_count(content)
             if (
@@ -1573,6 +1584,7 @@ class GraphRAGService:
         conversation_history: ConversationHistory | None = None,
         search_mode: SearchMode = "auto",
         query_chat_provider: ModelProvider | None = None,
+        query_embed_provider: ModelProvider | None = None,
     ) -> dict[str, Any]:
         """
         Execute a query against the indexed knowledge graph.
@@ -1588,8 +1600,12 @@ class GraphRAGService:
             QueryError: If query execution fails.
         """
         active_query_chat_provider = query_chat_provider or self.default_query_chat_provider
+        active_query_embed_provider = query_embed_provider or settings.get_query_embed_provider()
         async with self._query_model_lock:
-            self._configure_query_chat_provider(active_query_chat_provider)
+            self._configure_query_providers(
+                active_query_chat_provider,
+                active_query_embed_provider,
+            )
             return await self._query_with_active_provider(question, conversation_history, search_mode)
 
     async def _query_with_active_provider(
@@ -1603,6 +1619,33 @@ class GraphRAGService:
             resolved_mode, mode_reason = self.route_search_mode(question, search_mode)
             if resolved_mode != "source":
                 self._load_indexed_data_objects()
+
+            embedding_unavailable = await self._query_embedding_unavailable_detail(resolved_mode)
+            if embedding_unavailable:
+                if search_mode == "auto":
+                    failed_mode = resolved_mode
+                    logger.warning(
+                        "GraphRAG %s query requires embeddings but %s; "
+                        "falling back to source mode",
+                        failed_mode,
+                        embedding_unavailable,
+                    )
+                    resolved_mode = "source"
+                    mode_reason = (
+                        f"{mode_reason} Source fallback was used because {failed_mode} search "
+                        f"requires query embeddings and {embedding_unavailable}."
+                    )
+                else:
+                    remediation = (
+                        "Ellenőrizd az APP_OLLAMA_BASE_URL értékét és indítsd el az Ollamát"
+                        if self.query_embed_provider == "ollama"
+                        else "Ellenőrizd a query embedding provider konfigurációját és elérhetőségét"
+                    )
+                    raise QueryError(
+                        "A kiválasztott GraphRAG keresési mód query embeddinget igényel, "
+                        f"de {embedding_unavailable}. {remediation}, vagy válassz olyan "
+                        "keresési módot, amely nem igényel query embeddinget."
+                    )
 
             try:
                 result = await asyncio.wait_for(
@@ -1636,6 +1679,16 @@ class GraphRAGService:
                     "answer": result["answer"],
                     "retrieved_entities": result["retrieved_entities"],
                     "retrieved_relationships": result["retrieved_relationships"],
+                    "retrieved_sources": result.get("retrieved_sources", []),
+                    "search_mode_used": resolved_mode,
+                    "search_mode_reason": mode_reason,
+                }
+            if resolved_mode == "hybrid":
+                return {
+                    "answer": result["answer"],
+                    "retrieved_entities": result["retrieved_entities"],
+                    "retrieved_relationships": result["retrieved_relationships"],
+                    "retrieved_sources": result["retrieved_sources"],
                     "search_mode_used": resolved_mode,
                     "search_mode_reason": mode_reason,
                 }
@@ -1646,6 +1699,7 @@ class GraphRAGService:
                 "answer": result.response,
                 "retrieved_entities": retrieved_entities,
                 "retrieved_relationships": retrieved_relationships,
+                "retrieved_sources": [],
                 "search_mode_used": resolved_mode,
                 "search_mode_reason": mode_reason,
             }
@@ -1653,6 +1707,48 @@ class GraphRAGService:
         except Exception as e:
             logger.error(f"Failed to execute query: {e}")
             raise QueryError(f"Failed to execute query: {e}") from e
+
+    def _search_mode_requires_query_embeddings(self, mode: ResolvedSearchMode) -> bool:
+        """Return whether a search mode needs query-time embedding calls."""
+        return mode in {"local", "drift", "hybrid"}
+
+    async def _query_embedding_unavailable_detail(
+        self,
+        mode: ResolvedSearchMode,
+    ) -> str | None:
+        """Return an actionable detail when the active mode cannot reach embeddings."""
+        if not self._search_mode_requires_query_embeddings(mode):
+            return None
+
+        provider_label = (
+            f"{self.query_embed_provider}/"
+            f"{settings.get_model_name(self.query_embed_provider, 'embedding')}"
+        )
+        provider_detail = provider_label
+        if self.query_embed_provider == "ollama":
+            provider_detail = f"{provider_label}, APP_OLLAMA_BASE_URL={settings.ollama_base_url}"
+        try:
+            provider_ok = await self.check_provider_health(
+                self.query_embed_provider,
+                model_kind="embedding",
+            )
+        except GraphRAGError as e:
+            return (
+                f"a query embedding provider nem elérhető "
+                f"({provider_detail}): {e}"
+            )
+        except Exception as e:
+            return (
+                f"a query embedding provider ellenőrzése hibára futott "
+                f"({provider_detail}): {e}"
+            )
+
+        if not provider_ok:
+            return (
+                f"a query embedding provider nem egészséges "
+                f"({provider_detail})"
+            )
+        return None
 
     async def _execute_search(
         self,
@@ -1663,6 +1759,8 @@ class GraphRAGService:
         """Execute one GraphRAG search mode."""
         if resolved_mode == "source":
             return await self._execute_source_bound_search(question)
+        if resolved_mode == "hybrid":
+            return await self._execute_hybrid_search(question, conversation_history)
 
         search_engine = self._get_search_engine(resolved_mode)
         logger.info(
@@ -1689,8 +1787,13 @@ class GraphRAGService:
         normalized = self._normalize_query_text(question)
         source_bound_patterns = [
             "a megadott wikipedia cikk alapjan",
+            "az indexelt cikk alapjan",
+            "az indexelt forras alapjan",
             "a cikk alapjan",
             "a szoveg alapjan",
+            "csak az indexelt",
+            "kizarolag a forras",
+            "ne hasznalj kulso tudast",
             "csak azokat",
             "kifejezetten szerepelnek",
             "szerepel a szovegben",
@@ -1699,8 +1802,46 @@ class GraphRAGService:
             "listazd",
             "based on the article",
             "based on the text",
+            "based on the indexed article",
+            "based on the indexed source",
+            "strictly and exclusively",
+            "indexed article",
+            "indexed source",
+            "do not use outside knowledge",
+            "not supported by the indexed source",
             "only mention",
             "explicitly mentioned",
+        ]
+        source_extraction_patterns = [
+            "collaborator",
+            "collaborators",
+            "disputant",
+            "disputants",
+            "vitatkoztak",
+            "vitatkozo",
+            "vitatkozó",
+            "egyuttmukod",
+            "együttműköd",
+        ]
+        analytical_patterns = [
+            "analytical",
+            "analysis",
+            "explain how",
+            "connected",
+            "causal",
+            "chronological",
+            "turning points",
+            "synthesis",
+            "broader life path",
+            "life-path",
+            "historical-scientific",
+            "osszefugg",
+            "összefügg",
+            "elemzes",
+            "elemzés",
+            "kronologia",
+            "kronológia",
+            "ok-okozat",
         ]
         global_patterns = [
             "osszefogl",
@@ -1737,7 +1878,21 @@ class GraphRAGService:
             "hatas",
         ]
 
-        if any(pattern in normalized for pattern in source_bound_patterns):
+        is_source_bound = any(pattern in normalized for pattern in source_bound_patterns)
+        is_extraction_query = any(pattern in normalized for pattern in source_extraction_patterns)
+        is_analytical_query = any(pattern in normalized for pattern in analytical_patterns)
+
+        if is_source_bound and is_extraction_query:
+            return (
+                "source",
+                "Auto router selected source because the query asks for source-bound extraction from the text.",
+            )
+        if is_source_bound and is_analytical_query:
+            return (
+                "hybrid",
+                "Auto router selected hybrid for a source-bound analytical synthesis query.",
+            )
+        if is_source_bound:
             return (
                 "source",
                 "Auto router selected source because the query asks for source-bound extraction from the text.",
@@ -1829,9 +1984,11 @@ class GraphRAGService:
             if self._global_search_engine is None:
                 self._global_search_engine = self._create_global_search_engine()
             return self._global_search_engine
-        if self._drift_search_engine is None:
-            self._drift_search_engine = self._create_drift_search_engine()
-        return self._drift_search_engine
+        if mode == "drift":
+            if self._drift_search_engine is None:
+                self._drift_search_engine = self._create_drift_search_engine()
+            return self._drift_search_engine
+        raise QueryError(f"Search engine mode {mode} is executed by a dedicated path")
 
     def _extract_retrieved_context(self, result: Any) -> tuple[list[Any], list[Any]]:
         """Extract serializable local context entities and relationships from search results."""
@@ -1896,6 +2053,9 @@ class GraphRAGService:
 
     async def _execute_source_bound_search(self, question: str) -> dict[str, Any]:
         """Answer source-bound extraction questions using raw text units only."""
+        if not self._is_collaboration_source_query(question):
+            return await self._execute_generic_source_search(question)
+
         text_units = self._load_text_unit_records()
         if not text_units:
             raise QueryError("No text units loaded - index may be empty")
@@ -1929,7 +2089,493 @@ class GraphRAGService:
             "answer": answer,
             "retrieved_entities": entities,
             "retrieved_relationships": relationships,
+            "retrieved_sources": [],
         }
+
+    async def _execute_generic_source_search(self, question: str) -> dict[str, Any]:
+        """Answer a general source-bound question from ranked raw text units."""
+        evidence = self._rank_source_evidence(question, limit=8)
+        if not evidence:
+            raise QueryError("No source text units loaded - index may be empty")
+
+        prompt = self._build_source_answer_prompt(question, evidence)
+        response = await self.chat_model.achat(
+            prompt,
+            max_tokens=1200 if self._is_ollama_query() else 2200,
+            temperature=self._query_chat_temperature(),
+        )
+        answer = self._chat_response_content(response)
+        return {
+            "answer": answer,
+            "retrieved_entities": [],
+            "retrieved_relationships": [],
+            "retrieved_sources": [self._source_evidence_to_dict(item) for item in evidence],
+        }
+
+    async def _execute_hybrid_search(
+        self,
+        question: str,
+        conversation_history: ConversationHistory | None,
+    ) -> dict[str, Any]:
+        """Answer analytical source-bound questions using local graph context plus raw sources."""
+        evidence = self._rank_source_evidence(question, limit=8)
+        if not evidence:
+            raise QueryError("No source text units loaded - index may be empty")
+
+        local_result = await self._get_search_engine("local").search(
+            query=question,
+            conversation_history=conversation_history,
+        )
+        entities, relationships = self._extract_retrieved_context(local_result)
+        ranked_entities = self._rank_retrieved_items(
+            question,
+            entities,
+            text_fields=("title", "description"),
+        )[:8]
+        ranked_relationships = self._rank_retrieved_items(
+            question,
+            relationships,
+            text_fields=("source", "target", "description"),
+        )[:8]
+
+        prompt = self._build_hybrid_synthesis_prompt(
+            question,
+            evidence,
+            ranked_entities,
+            ranked_relationships,
+        )
+        response = await self.chat_model.achat(
+            prompt,
+            max_tokens=1600 if self._is_ollama_query() else 3000,
+            temperature=self._query_chat_temperature(),
+        )
+        answer = self._chat_response_content(response)
+        answer = await self._repair_strong_causal_language_if_needed(question, answer, evidence)
+
+        return {
+            "answer": answer,
+            "retrieved_entities": ranked_entities,
+            "retrieved_relationships": ranked_relationships,
+            "retrieved_sources": [self._source_evidence_to_dict(item) for item in evidence],
+        }
+
+    def _is_collaboration_source_query(self, question: str) -> bool:
+        """Return whether source mode should use the specialized person-relationship extractor."""
+        normalized = self._normalize_query_text(question)
+        markers = [
+            "collaborator",
+            "collaborators",
+            "disputant",
+            "disputants",
+            "scientific relationships",
+            "vitatkoztak",
+            "vitatkozo",
+            "egyuttmukod",
+        ]
+        return any(marker in normalized for marker in markers)
+
+    def _rank_source_evidence(self, question: str, *, limit: int) -> list[SourceEvidence]:
+        """Return the most relevant raw text units for a source-grounded query."""
+        text_units = self._load_text_unit_records()
+        if not text_units:
+            return []
+
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        for row_index, text_unit in enumerate(text_units):
+            text = str(text_unit.get("text", ""))
+            score = self._source_relevance_score(question, text)
+            if score <= 0:
+                continue
+            scored.append((score, row_index, text_unit))
+
+        if not scored and text_units:
+            scored = [
+                (0.1, row_index, text_unit)
+                for row_index, text_unit in enumerate(text_units[:limit])
+            ]
+
+        ranked: list[SourceEvidence] = []
+        for output_index, (score, row_index, text_unit) in enumerate(
+            sorted(scored, key=lambda item: item[0], reverse=True)[:limit],
+            start=1,
+        ):
+            text = str(text_unit.get("text", ""))
+            document_ids = self._source_document_ids(text_unit)
+            ranked.append(
+                SourceEvidence(
+                    id=f"S{output_index}",
+                    text_unit_id=str(text_unit.get("id", row_index)),
+                    source=self._source_label_for_text_unit(text_unit, output_index, document_ids),
+                    excerpt=self._trim_source_excerpt(text),
+                    score=round(score, 3),
+                    index=output_index,
+                    document_ids=document_ids,
+                )
+            )
+        return ranked
+
+    def _source_label_for_text_unit(
+        self,
+        text_unit: dict[str, Any],
+        output_index: int,
+        document_ids: list[str] | None = None,
+    ) -> str:
+        """Return a user-facing source label instead of raw GraphRAG document hashes."""
+        for key in ("source", "title", "filename", "file_name"):
+            label = self._clean_source_label(text_unit.get(key))
+            if label:
+                return label
+
+        document_labels = self._document_source_labels()
+        for document_id in document_ids or self._source_document_ids(text_unit) or []:
+            label = document_labels.get(document_id)
+            if label:
+                return label
+
+        human_readable_id = self._clean_source_label(text_unit.get("human_readable_id"))
+        if human_readable_id:
+            return f"Text unit {human_readable_id}"
+        return f"Source {output_index}"
+
+    def _source_document_ids(self, text_unit: dict[str, Any]) -> list[str] | None:
+        """Extract GraphRAG document ids without exposing them as source labels."""
+        raw_ids = text_unit.get("document_ids") or text_unit.get("document_id")
+        if raw_ids is None:
+            return None
+        if hasattr(raw_ids, "tolist"):
+            raw_ids = raw_ids.tolist()
+        if isinstance(raw_ids, (list, tuple, set)):
+            document_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+            return document_ids or None
+        raw_text = str(raw_ids).strip()
+        if not raw_text:
+            return None
+        return [raw_text]
+
+    def _document_source_labels(self) -> dict[str, str]:
+        """Map GraphRAG document ids to readable document labels when available."""
+        if self._document_source_labels_cache is not None:
+            return self._document_source_labels_cache
+
+        documents_file = self.output_dir / "documents.parquet"
+        labels: dict[str, str] = {}
+        if not documents_file.exists():
+            self._document_source_labels_cache = labels
+            return labels
+
+        try:
+            documents_df = pd.read_parquet(documents_file)
+            for document in documents_df.to_dict("records"):  # type: ignore[union-attr]
+                document_id = str(document.get("id", "")).strip()
+                if not document_id:
+                    continue
+                for key in ("title", "source", "filename", "file_name", "human_readable_id"):
+                    label = self._clean_source_label(document.get(key))
+                    if label:
+                        labels[document_id] = label
+                        break
+        except Exception as e:
+            logger.warning("Failed to load document labels for source citations: %s", e)
+
+        self._document_source_labels_cache = labels
+        return labels
+
+    def _clean_source_label(self, value: Any) -> str | None:
+        """Filter out empty values and raw GraphRAG hash ids from source labels."""
+        if value is None:
+            return None
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if isinstance(value, (list, tuple, set, dict)):
+            return None
+
+        label = str(value).strip()
+        if not label or label.casefold() in {"none", "nan", "null", "[]"}:
+            return None
+        if self._looks_like_hash_label(label):
+            return None
+        return label
+
+    def _looks_like_hash_label(self, label: str) -> bool:
+        """Return True for raw ids that should not be shown as citation titles."""
+        compact = label.strip().strip("[]'\"")
+        if re.fullmatch(r"[0-9a-f]{32,}", compact, flags=re.IGNORECASE):
+            return True
+        return bool(re.fullmatch(r"\['[0-9a-f]{32,}'\]", label, flags=re.IGNORECASE))
+
+    def _source_relevance_score(self, question: str, text: str) -> float:
+        """Score a text unit against a query using lightweight lexical evidence."""
+        normalized_question = self._normalize_query_text(question)
+        normalized_text = self._normalize_query_text(text)
+        query_tokens = self._content_tokens(normalized_question)
+        if not query_tokens:
+            return 0.0
+
+        text_token_set = set(self._content_tokens(normalized_text))
+        overlap = sum(1 for token in query_tokens if token in text_token_set)
+        score = float(overlap)
+
+        years = set(re.findall(r"\b(?:1[5-9]\d{2}|20\d{2})\b", question))
+        score += 3.0 * sum(1 for year in years if year in text)
+
+        for phrase in self._named_entity_like_phrases(question):
+            phrase_norm = self._normalize_query_text(phrase)
+            if phrase_norm and phrase_norm in normalized_text:
+                score += 4.0
+
+        significant_phrases = re.findall(r'"([^"]{4,80})"', question)
+        for phrase in significant_phrases:
+            if self._normalize_query_text(phrase) in normalized_text:
+                score += 5.0
+
+        if normalized_question and normalized_question in normalized_text:
+            score += 10.0
+        return score
+
+    def _content_tokens(self, normalized_text: str) -> list[str]:
+        """Return relevance tokens without common prompt filler words."""
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "from",
+            "that",
+            "this",
+            "with",
+            "your",
+            "answer",
+            "source",
+            "article",
+            "text",
+            "write",
+            "explain",
+            "what",
+            "why",
+            "how",
+            "are",
+            "was",
+            "were",
+            "egy",
+            "hogy",
+            "vagy",
+            "csak",
+            "forras",
+            "szoveg",
+            "cikk",
+        }
+        return [
+            token
+            for token in re.findall(r"[a-z0-9áéíóöőúüű]+", normalized_text, flags=re.IGNORECASE)
+            if len(token) > 2 and token not in stopwords
+        ]
+
+    def _named_entity_like_phrases(self, text: str) -> list[str]:
+        """Extract simple capitalized phrases useful for source evidence ranking."""
+        return re.findall(
+            r"\b[A-ZÁÉÍÓÖŐÚÜŰ][\wÁÉÍÓÖŐÚÜŰáéíóöőúüű-]+(?:\s+[A-ZÁÉÍÓÖŐÚÜŰ][\wÁÉÍÓÖŐÚÜŰáéíóöőúüű-]+){0,4}",
+            text,
+        )
+
+    def _trim_source_excerpt(self, text: str, max_chars: int = 1200) -> str:
+        """Trim a source excerpt without cutting through too much context."""
+        compact = re.sub(r"\s+", " ", text).strip()
+        if len(compact) <= max_chars:
+            return compact
+        return compact[: max_chars - 3].rsplit(" ", 1)[0] + "..."
+
+    def _source_evidence_to_dict(self, evidence: SourceEvidence) -> dict[str, Any]:
+        """Convert source evidence to a serializable response shape."""
+        return {
+            "id": evidence.id,
+            "text_unit_id": evidence.text_unit_id,
+            "source": evidence.source,
+            "excerpt": evidence.excerpt,
+            "score": evidence.score,
+            "index": evidence.index,
+            "document_ids": evidence.document_ids or [],
+        }
+
+    def _rank_retrieved_items(
+        self,
+        question: str,
+        items: list[Any],
+        *,
+        text_fields: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        """Rank retrieved graph context and cap noisy citations."""
+        ranked: list[tuple[float, int, dict[str, Any]]] = []
+        for index, raw_item in enumerate(items):
+            item = cast(dict[str, Any], raw_item)
+            combined = " ".join(str(item.get(field, "")) for field in text_fields)
+            score = self._source_relevance_score(question, combined)
+            ranked.append((score, index, item))
+        return [
+            self._convert_to_serializable(item)
+            for _, _, item in sorted(ranked, key=lambda row: (row[0], -row[1]), reverse=True)
+        ]
+
+    def _build_source_answer_prompt(self, question: str, evidence: list[SourceEvidence]) -> str:
+        """Build a generic source-bound answer prompt over ranked raw evidence."""
+        language = self._target_answer_language(question)
+        fallback = self._source_fallback_phrase(question, language)
+        source_blocks = self._format_source_evidence_blocks(evidence)
+        return f"""
+You answer questions using only the provided source excerpts.
+
+Target answer language: {language}.
+
+Rules:
+- Do not use outside knowledge.
+- Cite every major factual claim with source markers like [S1] or [S2].
+- If the source excerpts do not contain enough evidence, write exactly: {fallback}
+- Keep the answer concise unless the user asks for detail.
+
+User question:
+{question}
+
+Source excerpts:
+{source_blocks}
+""".strip()
+
+    def _build_hybrid_synthesis_prompt(
+        self,
+        question: str,
+        evidence: list[SourceEvidence],
+        entities: list[dict[str, Any]],
+        relationships: list[dict[str, Any]],
+    ) -> str:
+        """Build the final hybrid synthesis prompt from raw sources and graph context."""
+        language = self._target_answer_language(question)
+        fallback = self._source_fallback_phrase(question, language)
+        source_blocks = self._format_source_evidence_blocks(evidence)
+        graph_context = json.dumps(
+            {"entities": entities, "relationships": relationships},
+            ensure_ascii=False,
+            indent=2,
+        )
+        return f"""
+You are writing a source-grounded analytical answer from indexed GraphRAG evidence.
+
+Target answer language: {language}.
+
+Rules:
+- Use only the source excerpts and graph context below.
+- Source excerpts are the authority; graph context may help organize relationships but cannot override sources.
+- Cite every major factual, chronological, scientific, political, or causal claim with [S1], [S2], etc.
+- Do not use outside knowledge, assumptions, or unsupported facts.
+- If evidence is insufficient for a requested point, write exactly: {fallback}
+- Use cautious causal wording unless the source excerpt explicitly supports a strong causal claim.
+- Preserve the structure requested by the user when possible.
+
+User question:
+{question}
+
+Source excerpts:
+{source_blocks}
+
+Graph context:
+{graph_context}
+""".strip()
+
+    def _format_source_evidence_blocks(self, evidence: list[SourceEvidence]) -> str:
+        """Format source excerpts for prompts."""
+        return "\n\n".join(
+            f"[{item.id}] text_unit_id={item.text_unit_id}, source={item.source}\n{item.excerpt}"
+            for item in evidence
+        )
+
+    def _target_answer_language(self, question: str) -> str:
+        """Determine the answer language from explicit instructions or query language."""
+        normalized = self._normalize_query_text(question)
+        if "answer in english" in normalized or "write in english" in normalized:
+            return "English"
+        if "valaszolj magyarul" in normalized or "magyarul valaszolj" in normalized:
+            return "Hungarian"
+
+        hungarian_markers = [
+            "hogyan",
+            "miert",
+            "milyen",
+            "valasz",
+            "forras",
+            "szoveg",
+            "cikk",
+            "elemzes",
+            "kizarolag",
+        ]
+        if any(marker in normalized for marker in hungarian_markers):
+            return "Hungarian"
+        return "English"
+
+    def _source_fallback_phrase(self, question: str, language: str) -> str:
+        """Return the source-insufficient fallback phrase for the prompt."""
+        if "Not determinable from the source." in question:
+            return "Not determinable from the source."
+        if language == "Hungarian":
+            return "Nem állapítható meg a forrásból."
+        return "Not determinable from the source."
+
+    def _chat_response_content(self, response: Any) -> str:
+        """Extract text content from GraphRAG language model responses."""
+        try:
+            return str(response.output.content).strip()
+        except Exception:
+            return str(response).strip()
+
+    async def _repair_strong_causal_language_if_needed(
+        self,
+        question: str,
+        answer: str,
+        evidence: list[SourceEvidence],
+    ) -> str:
+        """Repair unsupported strong causal wording in hybrid answers."""
+        strong_terms = [
+            "launched",
+            "started",
+            "caused",
+            "directly led to",
+            "elindította",
+            "okozta",
+            "közvetlenül vezetett",
+        ]
+        answer_norm = self._normalize_source_text(answer)
+        used_terms = [
+            term for term in strong_terms if self._normalize_source_text(term) in answer_norm
+        ]
+        if not used_terms:
+            return answer
+
+        evidence_norm = self._normalize_source_text(" ".join(item.excerpt for item in evidence))
+        unsupported_terms = [
+            term for term in used_terms if self._normalize_source_text(term) not in evidence_norm
+        ]
+        if not unsupported_terms:
+            return answer
+
+        prompt = f"""
+Revise the answer to remove unsupported strong causal wording.
+
+Rules:
+- Keep the same target language as the answer.
+- Use only cautious wording such as "helped prompt", "contributed to", "was connected to", or "played a role in" unless directly quoted evidence supports stronger wording.
+- Preserve source citations like [S1].
+- Do not add new facts.
+
+User question:
+{question}
+
+Unsupported strong wording:
+{", ".join(unsupported_terms)}
+
+Answer to revise:
+{answer}
+""".strip()
+        response = await self.chat_model.achat(
+            prompt,
+            max_tokens=1200 if self._is_ollama_query() else 2200,
+            temperature=self._query_chat_temperature(),
+        )
+        return self._chat_response_content(response)
 
     def _load_text_unit_records(self) -> list[dict[str, Any]]:
         """Load GraphRAG text units as dictionaries for source-bound extraction."""
@@ -2307,6 +2953,8 @@ Generate a response of the target length and format that responds to the user's 
  and format. Use only the supplied data tables; do not incorporate outside knowledge.
 
 If you don't know the answer, just say so. Do not make anything up.
+Answer in the same language as the user's question unless the user explicitly requests
+a different answer language.
 
 Points supported by data should list their data references as follows:
 

@@ -50,7 +50,7 @@ export const UI_CONSTANTS = {
   DETAILS_WIDTH: 320,
   
   // Limits
-  MAX_MESSAGE_LENGTH: 5000,
+  MAX_MESSAGE_LENGTH: 2000,
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   
   // Delays

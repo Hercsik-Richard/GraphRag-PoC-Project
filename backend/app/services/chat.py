@@ -177,7 +177,7 @@ async def get_messages_by_conversation(
     query = text("""
         SELECT id, conversation_id, role, content, created_at,
                retrieved_entities, retrieved_relationships,
-               search_mode_used, search_mode_reason
+               retrieved_sources, search_mode_used, search_mode_reason
         FROM messages
         WHERE conversation_id = :conversation_id
         ORDER BY created_at ASC
@@ -195,8 +195,9 @@ async def get_messages_by_conversation(
             "created_at": row[4],
             "retrieved_entities": row[5],
             "retrieved_relationships": row[6],
-            "search_mode_used": row[7],
-            "search_mode_reason": row[8],
+            "retrieved_sources": row[7],
+            "search_mode_used": row[8],
+            "search_mode_reason": row[9],
         }
         for row in rows
     ]
@@ -209,6 +210,7 @@ async def save_message(
     content: str,
     retrieved_entities: list[dict[str, Any]] | None = None,
     retrieved_relationships: list[dict[str, Any]] | None = None,
+    retrieved_sources: list[dict[str, Any]] | None = None,
     search_mode_used: str | None = None,
     search_mode_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -232,16 +234,17 @@ async def save_message(
     query = text("""
         INSERT INTO messages (
             id, conversation_id, role, content, created_at,
-            retrieved_entities, retrieved_relationships,
+            retrieved_entities, retrieved_relationships, retrieved_sources,
             search_mode_used, search_mode_reason
         )
         VALUES (
             :id, :conversation_id, :role, :content, :created_at,
             CAST(:retrieved_entities AS json), CAST(:retrieved_relationships AS json),
+            CAST(:retrieved_sources AS json),
             :search_mode_used, :search_mode_reason
         )
         RETURNING id, conversation_id, role, content, created_at,
-                  retrieved_entities, retrieved_relationships,
+                  retrieved_entities, retrieved_relationships, retrieved_sources,
                   search_mode_used, search_mode_reason
     """)
 
@@ -250,6 +253,7 @@ async def save_message(
 
     entities_json = json.dumps(retrieved_entities) if retrieved_entities else None
     relationships_json = json.dumps(retrieved_relationships) if retrieved_relationships else None
+    sources_json = json.dumps(retrieved_sources) if retrieved_sources else None
 
     result = await db.execute(
         query,
@@ -261,6 +265,7 @@ async def save_message(
             "created_at": now,
             "retrieved_entities": entities_json,
             "retrieved_relationships": relationships_json,
+            "retrieved_sources": sources_json,
             "search_mode_used": search_mode_used,
             "search_mode_reason": search_mode_reason,
         },
@@ -281,8 +286,9 @@ async def save_message(
         "created_at": row[4],
         "retrieved_entities": row[5],
         "retrieved_relationships": row[6],
-        "search_mode_used": row[7],
-        "search_mode_reason": row[8],
+        "retrieved_sources": row[7],
+        "search_mode_used": row[8],
+        "search_mode_reason": row[9],
     }
 
 
@@ -291,7 +297,8 @@ async def process_query(
     conversation_id: UUID,
     question: str,
     search_mode: SearchMode = "auto",
-    query_model_provider: ModelProvider | None = None,
+    query_chat_provider: ModelProvider | None = None,
+    query_embed_provider: ModelProvider | None = None,
 ) -> dict[str, Any]:
     """
     Process a user query with GraphRAG and save messages.
@@ -337,12 +344,14 @@ async def process_query(
             question,
             conversation_history,
             search_mode,
-            query_model_provider,
+            query_chat_provider,
+            query_embed_provider,
         )
 
         answer = query_result.get("answer", "")
         retrieved_entities = query_result.get("retrieved_entities", [])
         retrieved_relationships = query_result.get("retrieved_relationships", [])
+        retrieved_sources = query_result.get("retrieved_sources", [])
         search_mode_used = query_result.get("search_mode_used", "local")
         search_mode_reason = query_result.get("search_mode_reason", "")
 
@@ -354,6 +363,7 @@ async def process_query(
             answer,
             retrieved_entities=retrieved_entities,
             retrieved_relationships=retrieved_relationships,
+            retrieved_sources=retrieved_sources,
             search_mode_used=search_mode_used,
             search_mode_reason=search_mode_reason,
         )
@@ -367,6 +377,7 @@ async def process_query(
             "retrieved_graph": {
                 "entities": retrieved_entities,
                 "relationships": retrieved_relationships,
+                "sources": retrieved_sources,
             },
             "search_mode_used": search_mode_used,
             "search_mode_reason": search_mode_reason,
@@ -391,6 +402,7 @@ async def process_query(
             ),
             retrieved_entities=[],
             retrieved_relationships=[],
+            retrieved_sources=[],
             search_mode_used=search_mode_used,
             search_mode_reason=search_mode_reason,
         )
@@ -400,6 +412,7 @@ async def process_query(
             "retrieved_graph": {
                 "entities": [],
                 "relationships": [],
+                "sources": [],
             },
             "search_mode_used": search_mode_used,
             "search_mode_reason": search_mode_reason,

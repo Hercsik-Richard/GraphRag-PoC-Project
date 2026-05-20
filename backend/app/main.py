@@ -63,18 +63,26 @@ async def lifespan(app: FastAPI):
 
     # Check model provider connections
     try:
-        provider_checks: list[tuple[str, ModelProvider, Literal["chat", "embedding"]]] = [
-            ("index chat", settings.get_index_chat_provider(), "chat"),
-            ("index embedding", settings.get_index_embed_provider(), "embedding"),
-            ("query chat", settings.get_query_chat_provider(), "chat"),
-            ("query embedding", settings.get_query_embed_provider(), "embedding"),
-        ]
-        for label, provider, model_kind in provider_checks:
-            provider_ok = await graphrag_service.check_provider_health(
+        for role, (provider, model_kind) in settings.get_active_provider_roles().items():
+            try:
+                provider_ok = await graphrag_service.check_provider_health(
+                    provider,
+                    model_kind=model_kind,
+                )
+            except Exception as e:
+                provider_ok = False
+                logger.warning(
+                    "%s provider %s is unavailable but will only block that active role: %s",
+                    role.replace("_", " "),
+                    provider,
+                    e,
+                )
+            logger.info(
+                "%s provider %s status: %s",
+                role.replace("_", " "),
                 provider,
-                model_kind=model_kind,
+                provider_ok,
             )
-            logger.info("%s provider %s status: %s", label, provider, provider_ok)
         models = await graphrag_service.verify_models()
         logger.info(f"Models available: {models}")
     except Exception as e:
@@ -204,26 +212,12 @@ async def health_check():
             return "disconnected"
 
     provider_checks = {
-        "index_chat": {
-            "provider": settings.get_index_chat_provider(),
-            "model": settings.get_model_name(settings.get_index_chat_provider(), "chat"),
-            "status": await provider_status(settings.get_index_chat_provider(), "chat"),
-        },
-        "index_embedding": {
-            "provider": settings.get_index_embed_provider(),
-            "model": settings.get_model_name(settings.get_index_embed_provider(), "embedding"),
-            "status": await provider_status(settings.get_index_embed_provider(), "embedding"),
-        },
-        "query_chat": {
-            "provider": settings.get_query_chat_provider(),
-            "model": settings.get_model_name(settings.get_query_chat_provider(), "chat"),
-            "status": await provider_status(settings.get_query_chat_provider(), "chat"),
-        },
-        "query_embedding": {
-            "provider": settings.get_query_embed_provider(),
-            "model": settings.get_model_name(settings.get_query_embed_provider(), "embedding"),
-            "status": await provider_status(settings.get_query_embed_provider(), "embedding"),
-        },
+        role: {
+            "provider": provider,
+            "model": settings.get_model_name(provider, model_kind),
+            "status": await provider_status(provider, model_kind),
+        }
+        for role, (provider, model_kind) in settings.get_active_provider_roles().items()
     }
     providers_ok = all(item["status"] == "connected" for item in provider_checks.values())
 

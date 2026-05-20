@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.config import Settings, chat_temperature_for_model
+from app.schemas.chat import MessageSchema, QueryRequestSchema
 from app.services.graphrag import (
     Gemini3TemperatureGuardChatModel,
     GeminiFreeTierRateLimiter,
@@ -56,6 +57,54 @@ def test_auto_router_selects_source_for_source_bound_extraction() -> None:
     assert "source-bound" in reason
 
 
+def test_auto_router_selects_hybrid_for_source_bound_analysis() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    mode, reason = service.route_search_mode(
+        "Answer strictly and exclusively from the indexed Albert Einstein Wikipedia article. "
+        "Write a concise analytical answer explaining how the turning points in Albert "
+        "Einstein's life, scientific achievements, and political decisions are connected."
+    )
+
+    assert mode == "hybrid"
+    assert "hybrid" in reason
+
+
+def test_auto_hybrid_falls_back_to_source_when_query_embeddings_are_unavailable() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service.query_embed_provider = "ollama"
+    service._load_indexed_data_objects = lambda: None  # type: ignore[method-assign]
+
+    async def unavailable_detail(mode: str) -> str | None:
+        assert mode == "hybrid"
+        return "a query embedding provider nem elérhető"
+
+    async def source_search(question: str) -> dict[str, object]:
+        assert "indexed Albert Einstein Wikipedia article" in question
+        return {
+            "answer": "source answer",
+            "retrieved_entities": [],
+            "retrieved_relationships": [],
+            "retrieved_sources": [],
+        }
+
+    service._query_embedding_unavailable_detail = unavailable_detail  # type: ignore[method-assign]
+    service._execute_source_bound_search = source_search  # type: ignore[method-assign]
+
+    result = asyncio.run(
+        service._query_with_active_provider(
+            "Answer strictly and exclusively from the indexed Albert Einstein Wikipedia article. "
+            "Write a concise analytical answer explaining how the turning points in Albert "
+            "Einstein's life, scientific achievements, and political decisions are connected.",
+            search_mode="auto",
+        )
+    )
+
+    assert result["answer"] == "source answer"
+    assert result["search_mode_used"] == "source"
+    assert "Source fallback" in result["search_mode_reason"]
+
+
 def test_manual_search_mode_overrides_auto_router() -> None:
     service = GraphRAGService.__new__(GraphRAGService)
 
@@ -72,6 +121,33 @@ def test_manual_source_search_mode_overrides_auto_router() -> None:
 
     assert mode == "source"
     assert "Manual" in reason
+
+
+def test_manual_hybrid_search_mode_overrides_auto_router() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    mode, reason = service.route_search_mode("Summarize the whole dataset", "hybrid")
+
+    assert mode == "hybrid"
+    assert "Manual" in reason
+
+
+def test_hybrid_query_schema_is_valid() -> None:
+    request = QueryRequestSchema(question="Explain from the indexed source", search_mode="hybrid")
+
+    assert request.search_mode == "hybrid"
+
+
+def test_message_schema_accepts_missing_retrieved_sources() -> None:
+    message = MessageSchema(
+        id="11111111-1111-1111-1111-111111111111",
+        conversation_id="22222222-2222-2222-2222-222222222222",
+        role="assistant",
+        content="ok",
+        created_at="2026-05-20T12:00:00",
+    )
+
+    assert message.retrieved_sources is None
 
 
 def test_source_validator_rejects_committee_relationship_false_positive() -> None:
@@ -147,6 +223,48 @@ def test_source_answer_is_formatted_from_validated_hits_only() -> None:
     assert "Niels Bohr" in answer
 
 
+def test_source_evidence_ranking_prioritizes_query_terms() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service._document_source_labels_cache = {}
+    service._load_text_unit_records = lambda: [  # type: ignore[method-assign]
+        {
+            "id": "a",
+            "text": "Einstein played violin and discussed general cultural interests in Europe.",
+        },
+        {
+            "id": "b",
+            "text": "In 1939, Leo Szilard drafted a letter that Einstein signed and sent to President Franklin D. Roosevelt about uranium and nuclear weapons.",
+        },
+    ]
+
+    evidence = service._rank_source_evidence("What does the source say about the 1939 Roosevelt letter?", limit=2)
+
+    assert evidence[0].text_unit_id == "b"
+    assert evidence[0].id == "S1"
+
+
+def test_source_label_does_not_expose_document_hashes() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service._document_source_labels_cache = {}
+    text_unit = {
+        "id": "tu-1",
+        "document_ids": [
+            "1224d1b7896f0c4080d03654dcf42eea041dbdedba4e8198474c2e11082759a4422"
+        ],
+    }
+
+    label = service._source_label_for_text_unit(text_unit, 8)
+
+    assert label == "Source 8"
+
+
+def test_target_answer_language_prefers_explicit_instruction() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    assert service._target_answer_language("Válaszolj magyarul: What happened?") == "Hungarian"
+    assert service._target_answer_language("Answer in English: mi történt?") == "English"
+
+
 def test_gemini_provider_requires_api_key() -> None:
     with pytest.raises(ValueError, match="APP_GEMINI_API_KEY"):
         make_settings(query_chat_provider="gemini", gemini_api_key=None)
@@ -184,6 +302,39 @@ def test_gemini_index_and_query_chat_with_ollama_embeddings_profile() -> None:
     assert settings.get_query_chat_provider() == "gemini"
     assert settings.get_query_embed_provider() == "ollama"
     assert settings.embedding_config_matches_index() is True
+
+
+def test_inactive_ollama_provider_does_not_require_ollama_configuration() -> None:
+    settings = make_settings(
+        ollama_base_url=None,
+        index_chat_provider="gemini",
+        index_embed_provider="gemini",
+        query_chat_provider="gemini",
+        query_embed_provider="gemini",
+        gemini_api_key="test-key",
+    )
+
+    active_roles = settings.get_active_provider_roles()
+
+    assert all(provider == "gemini" for provider, _model_kind in active_roles.values())
+
+
+def test_verify_models_checks_only_active_query_roles() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service.query_chat_provider = "gemini"
+    service.query_embed_provider = "gemini"
+    calls: list[tuple[str, str]] = []
+
+    async def check_provider(provider: str, model_kind: str = "both") -> bool:
+        calls.append((provider, model_kind))
+        return True
+
+    service.check_provider_health = check_provider  # type: ignore[method-assign]
+
+    result = asyncio.run(service.verify_models())
+
+    assert result == {"llm": True, "embedding": True}
+    assert calls == [("gemini", "chat"), ("gemini", "embedding")]
 
 
 def test_gemini_free_tier_guard_defaults_are_conservative() -> None:

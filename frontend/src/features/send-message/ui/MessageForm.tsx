@@ -7,9 +7,10 @@ import type { SearchMode } from "@/entities/message";
 import { cn, UI_CONSTANTS } from "@/shared";
 
 interface MessageFormProps {
-  onSubmit: (message: string, searchMode: SearchMode) => void;
+  onSubmit: (message: string, searchMode: SearchMode) => Promise<void> | void;
   isLoading?: boolean;
   disabled?: boolean;
+  errorMessage?: string | null;
 }
 
 const SEARCH_MODES: Array<{ value: SearchMode; label: string }> = [
@@ -18,23 +19,39 @@ const SEARCH_MODES: Array<{ value: SearchMode; label: string }> = [
   { value: "global", label: "Global" },
   { value: "drift", label: "DRIFT" },
   { value: "source", label: "Source" },
+  { value: "hybrid", label: "Hybrid" },
 ];
 
 export function MessageForm({
   onSubmit,
   isLoading = false,
   disabled = false,
+  errorMessage = null,
 }: MessageFormProps) {
   const [message, setMessage] = useState("");
   const [searchMode, setSearchMode] = useState<SearchMode>("auto");
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     if (!message.trim() || isLoading || disabled) return;
 
-    onSubmit(message.trim(), searchMode);
-    setMessage("");
+    const trimmedMessage = message.trim();
+    if (trimmedMessage.length > UI_CONSTANTS.MAX_MESSAGE_LENGTH) {
+      setLocalError(
+        `A kérdés legfeljebb ${UI_CONSTANTS.MAX_MESSAGE_LENGTH} karakter lehet.`
+      );
+      return;
+    }
+
+    setLocalError(null);
+    try {
+      await onSubmit(trimmedMessage, searchMode);
+      setMessage("");
+    } catch {
+      // Keep the user's draft in place; the parent renders the actionable error.
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -46,7 +63,7 @@ export function MessageForm({
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-      <div className="inline-grid w-fit grid-cols-5 rounded-lg border border-border/70 bg-muted/40 p-1">
+      <div className="grid w-full grid-cols-3 rounded-lg border border-border/70 bg-muted/40 p-1 sm:inline-grid sm:w-fit sm:grid-cols-6">
         {SEARCH_MODES.map((mode) => (
           <button
             key={mode.value}
@@ -70,7 +87,10 @@ export function MessageForm({
       <div className="flex gap-2">
         <textarea
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e) => {
+            setMessage(e.target.value);
+            setLocalError(null);
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Ask a question about your documents..."
           disabled={isLoading || disabled}
@@ -106,6 +126,20 @@ export function MessageForm({
             </>
           )}
         </button>
+      </div>
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <p className="min-h-4 text-destructive">
+          {localError || errorMessage || ""}
+        </p>
+        <span
+          className={cn(
+            "shrink-0 text-muted-foreground",
+            message.length > UI_CONSTANTS.MAX_MESSAGE_LENGTH * 0.9 &&
+              "text-destructive"
+          )}
+        >
+          {message.length}/{UI_CONSTANTS.MAX_MESSAGE_LENGTH}
+        </span>
       </div>
     </form>
   );

@@ -8,10 +8,15 @@ import { getIndexProgress, useUploadDocument } from "../api/uploadDocument";
 
 interface UploadButtonProps {
   onUploadComplete?: () => void;
-  modelProvider: ModelProvider;
+  indexChatProvider: ModelProvider;
+  indexEmbedProvider: ModelProvider;
 }
 
-export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonProps) {
+export function UploadButton({
+  onUploadComplete,
+  indexChatProvider,
+  indexEmbedProvider,
+}: UploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { uploadDocument, isUploading, error } = useUploadDocument();
   const [status, setStatus] = useState<"idle" | "indexing" | "success" | "error">("idle");
@@ -123,7 +128,11 @@ export function UploadButton({ onUploadComplete, modelProvider }: UploadButtonPr
       setPhaseTotal(null);
       setPhaseProgress(null);
 
-      const response = await uploadDocument({ file, modelProvider });
+      const response = await uploadDocument({
+        file,
+        indexChatProvider,
+        indexEmbedProvider,
+      });
       setProgress(response.progress);
       setMessage(response.message);
       setPollingDocumentId(response.document_id);

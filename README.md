@@ -10,8 +10,8 @@ A rendszer nem kötődik egyetlen témához: bármilyen UTF-8 kódolású `.txt`
 - Entitások, kapcsolatok, közösségek és szövegegységek előállítása GraphRAG-gel.
 - Interaktív React Flow gráfnézet fő komponens, összekapcsolt nézet és teljes nézet szűrőkkel.
 - Chat felület beszélgetéslistával, üzenetelőzményekkel és kattintható forrás-entitásokkal.
-- `auto`, `local`, `global` és `drift` keresési módok.
-- Könnyű automatikus routing: az `auto` mód a kérdés alapján választ local, global vagy DRIFT keresést.
+- `auto`, `local`, `global`, `drift`, `source` és `hybrid` keresési módok.
+- Könnyű automatikus routing: az `auto` mód a kérdés alapján választ local, global, DRIFT, source vagy hybrid keresést.
 - Lokális Ollama alapértelmezés, opcionális Gemini és OpenRouter provider támogatással.
 - Külön konfigurálható indexelési chat provider, indexelési embedding provider, lekérdezési chat provider és lekérdezési embedding provider.
 - Indexelési folyamatjelzés százalékkal, chunk állapottal és hibaüzenetekkel.
