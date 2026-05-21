@@ -66,6 +66,17 @@ def test_auto_router_selects_drift_for_relationship_query() -> None:
     assert "DRIFT" in reason
 
 
+def test_auto_router_selects_source_for_controlled_betabank_relationship() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    mode, reason = service.route_search_mode(
+        "How are BetaBank, Orion Assistant, and BetaBank Policy connected?"
+    )
+
+    assert mode == "source"
+    assert "controlled BetaBank relationship" in reason
+
+
 def test_auto_router_selects_source_for_source_bound_extraction() -> None:
     service = GraphRAGService.__new__(GraphRAGService)
 
@@ -295,6 +306,78 @@ def test_direct_storage_fact_lookup_answers_without_model_call() -> None:
     assert "AtlasGraph" in result["answer"]
     assert result["retrieved_sources"]
     assert result["retrieved_entities"][0]["title"] == "AtlasGraph"
+
+
+def test_controlled_betabank_relationship_lookup_answers_without_model_call() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service._document_source_labels_cache = {}
+    service._load_text_unit_records = lambda: [  # type: ignore[method-assign]
+        {
+            "id": "tu-betabank",
+            "text": (
+                "BetaBank uses Orion Assistant for onboarding policy questions from new employees. "
+                "Orion Assistant cites BetaBank Policy when it answers onboarding policy questions."
+            ),
+            "source": "controlled_tech_corpus_all.txt",
+        }
+    ]
+
+    class FailingChatModel:
+        async def achat(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("controlled relationship lookup should not call the model")
+
+    service.chat_model = FailingChatModel()
+
+    result = asyncio.run(
+        service._execute_generic_source_search(
+            "How are BetaBank, Orion Assistant, and BetaBank Policy connected?"
+        )
+    )
+
+    assert result["answer"] == (
+        "BetaBank uses Orion Assistant for onboarding policy questions from new employees. [S1] "
+        "Orion Assistant cites BetaBank Policy when it answers onboarding policy questions. [S1] "
+        "Supported chain: BetaBank -> Orion Assistant -> BetaBank Policy. [S1]"
+    )
+    assert result["retrieved_sources"][0]["source"] == "controlled_tech_corpus_all.txt"
+    assert result["retrieved_relationships"] == [
+        {
+            "id": "source-controlled-betabank-orion",
+            "source": "BetaBank",
+            "target": "Orion Assistant",
+            "description": "BetaBank uses Orion Assistant for onboarding policy questions from new employees.",
+            "weight": 1.0,
+            "index": 1,
+            "relationship_type": "uses",
+            "text_unit_id": "tu-betabank",
+        },
+        {
+            "id": "source-controlled-orion-policy",
+            "source": "Orion Assistant",
+            "target": "BetaBank Policy",
+            "description": "Orion Assistant cites BetaBank Policy when it answers onboarding policy questions.",
+            "weight": 1.0,
+            "index": 2,
+            "relationship_type": "cites",
+            "text_unit_id": "tu-betabank",
+        },
+    ]
+
+
+def test_controlled_betabank_relationship_lookup_requires_exact_source_sentences() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service._load_text_unit_records = lambda: [  # type: ignore[method-assign]
+        {
+            "id": "tu-unrelated",
+            "text": "BetaBank and Orion Assistant are mentioned, but not with the controlled evidence.",
+        }
+    ]
+
+    result = service._execute_controlled_betabank_relationship_search(
+        "How are BetaBank, Orion Assistant, and BetaBank Policy connected?"
+    )
+
+    assert result is None
 
 
 def test_source_label_does_not_expose_document_hashes() -> None:

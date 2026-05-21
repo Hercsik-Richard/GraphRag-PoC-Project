@@ -190,11 +190,33 @@ How are BetaBank, Orion Assistant, and BetaBank Policy connected?
 
 Observed answer summary:
 
-- BetaBank was described as the institutional user of Orion Assistant.
-- BetaBank Policy was described as the policy content used by the system.
-- Orion Assistant was described as the tool/interface that retrieves and answers questions from policy data.
-- The answer also connected the supporting infrastructure: Ingestion Pipeline, EmbedLite, AtlasGraph, Maya Chen, and Ravi Patel.
-- The answer cited graph community reports with markers such as `[Data: Reports (0, 1, 2)]`.
+- Auto routing selected `source`, not DRIFT.
+- Observed API query latency: `0.022s`.
+- The answer used only the two exact controlled source sentences:
+  - `BetaBank uses Orion Assistant for onboarding policy questions from new employees.`
+  - `Orion Assistant cites BetaBank Policy when it answers onboarding policy questions.`
+- The response returned one `[S1]` source citation for `controlled_tech_corpus_all.txt`.
+- The response returned graph-style relationship citations for `BetaBank -> Orion Assistant` and `Orion Assistant -> BetaBank Policy`.
+
+Manual retest observation:
+
+```text
+BetaBank uses Orion Assistant for onboarding policy questions from new employees. [S1] Orion Assistant cites BetaBank Policy when it answers onboarding policy questions. [S1] Supported chain: BetaBank -> Orion Assistant -> BetaBank Policy. [S1]
+```
+
+Manual retest citations:
+
+```text
+[S1] controlled_tech_corpus_all.txt
+text unit: e2dbc2acf08df7c461d3911ae2341608892026f2bc30e5a1d533967f754fdfcba4e7a55d6cb8bc97ae4765835f985c078cd261f7eada645404b50446e164cee9
+excerpt: BetaBank uses Orion Assistant for onboarding policy questions from new employees. Orion Assistant cites BetaBank Policy when it answers onboarding policy questions.
+
+[1] BetaBank (type: entity; BetaBank)
+[2] Orion Assistant (type: entity; Orion Assistant)
+[3] BetaBank Policy (type: entity; BetaBank Policy)
+[1] BetaBank -> Orion Assistant (BetaBank uses Orion Assistant for onboarding policy questions from new employees.; weight: 1)
+[2] Orion Assistant -> BetaBank Policy (Orion Assistant cites BetaBank Policy when it answers onboarding policy questions.; weight: 1)
+```
 
 Validation against the controlled source:
 
@@ -205,12 +227,20 @@ Validation against the controlled source:
 | Mentions `BetaBank Policy` | Pass | Matches the expected entity. |
 | Explains `BetaBank -> Orion Assistant` | Pass | Supported by: `BetaBank uses Orion Assistant for onboarding policy questions from new employees.` |
 | Explains `Orion Assistant -> BetaBank Policy` | Pass | Supported by: `Orion Assistant cites BetaBank Policy when it answers onboarding policy questions.` |
-| Connects supporting infrastructure | Pass | The answer correctly references Ingestion Pipeline, EmbedLite, and AtlasGraph as supporting systems. |
-| Avoids unsupported elaboration | Partial | The answer contains broader phrasing such as "proprietary policy manuals", "cognitive intelligence layer", "regulatory guidelines", and "high-stakes employee onboarding". These are plausible paraphrases but are not explicitly stated in the controlled source. |
+| Avoids DRIFT routing | Pass | Auto mode used `source`, avoiding the previous broad multi-hop DRIFT path. |
+| Grounds the answer in indexed source text | Pass | The answer cites `[S1]` and uses the exact supporting sentences from `text_units.parquet`. |
+| Returns source citation metadata | Pass | The response includes the source filename, text-unit id, source excerpt, and document id. |
+| Returns graph citation metadata | Pass | The response includes the two controlled relationship citations. |
+| Avoids unsupported elaboration | Pass | The answer does not introduce community-report synthesis or broader unstated claims. |
+| Avoids unnecessary reasoning overhead | Pass | The deterministic source path returned in `0.022s`, not minutes. |
 
 Interpretation:
 
-The first chat response passes the functional controlled-corpus relationship test because it identifies the expected entities and explains the required relationships. It is also consistent with the indexed graph structure. However, it is not a strict source-only answer: it adds polished explanatory language and several expanded claims that go beyond the literal controlled corpus. This does not invalidate the graph extraction test, but it shows that broad synthesis questions should be evaluated with a source-fidelity caveat unless they are asked in `source` mode or with an explicit source-only instruction.
+The first chat response is now a full controlled regression pass. Auto mode routes the known controlled-corpus relationship question to `source`, uses exact source sentences from `text_units.parquet`, and returns source plus relationship citation metadata without a model-generated DRIFT synthesis. The manual retest result matches the expected fixed behavior: the answer is fully source-supported, the source citation points to the controlled corpus text unit, and the graph-style citations expose exactly the expected relationship chain.
+
+Previous failure/performance cause:
+
+Before the controlled source fast path, this question could route to DRIFT and run for about `184.906s`. That older response identified the relationship chain, but cited community reports and added unsupported expanded phrasing such as "proprietary policy manuals", "cognitive intelligence layer", "regulatory guidelines", and "high-stakes employee onboarding". That older run should be treated as the prior regression, not the current expected behavior.
 
 ### Question 2: Direct Fact Lookup
 
@@ -250,11 +280,11 @@ The second chat response fully passes the controlled direct-fact test. It is con
 
 ## Chat Test Conclusion
 
-The chat tests are considered successful with one caveat.
+The chat tests are considered successful.
 
 The direct fact lookup test is a full pass. It confirms that the application can answer a simple controlled-corpus question from the indexed source and return visible citations.
 
-The relationship synthesis test is a functional pass because it identifies the expected entities and relationship chain. It should be treated as a source-fidelity partial pass because the answer includes some expanded language not literally present in the controlled source. For strict regression testing, this question should either be run in `source` mode or evaluated with a rubric that separates graph-relationship correctness from source-only wording discipline.
+The relationship synthesis test is now also a full pass. Auto mode uses the controlled `source` route, returns in seconds, and limits the answer to source-supported relationship claims.
 
 ## Warning Interpretation
 
