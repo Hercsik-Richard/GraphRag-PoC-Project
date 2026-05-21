@@ -15,12 +15,14 @@ class ConversationCreateSchema(BaseModel):
     """Schema for creating a new conversation."""
 
     title: str = Field(..., min_length=1, max_length=500, description="Conversation title")
+    graph_id: UUID | None = Field(None, description="Indexed graph this conversation belongs to")
 
 
 class ConversationSchema(BaseModel):
     """Schema for conversation response."""
 
     id: UUID
+    graph_id: UUID | None = None
     title: str
     created_at: datetime
     updated_at: datetime

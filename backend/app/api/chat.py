@@ -4,6 +4,8 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Query as FastAPIQuery
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
@@ -39,8 +41,41 @@ async def create_conversation(
         ConversationSchema: Created conversation.
     """
     try:
-        result = await chat_service.create_conversation(db, conversation.title)
+        graph_id = conversation.graph_id
+        if graph_id is None:
+            active_result = await db.execute(
+                text("""
+                    SELECT id
+                    FROM indexed_graphs
+                    WHERE is_active = TRUE AND status = 'completed'
+                    LIMIT 1
+                """)
+            )
+            active_row = active_result.fetchone()
+            graph_id = active_row.id if active_row else None
+
+        if graph_id is not None:
+            graph_result = await db.execute(
+                text("""
+                    SELECT status
+                    FROM indexed_graphs
+                    WHERE id = :graph_id
+                """),
+                {"graph_id": graph_id},
+            )
+            graph_row = graph_result.fetchone()
+            if graph_row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph not found")
+            if graph_row.status != "completed":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Only completed graphs can have conversations",
+                )
+
+        result = await chat_service.create_conversation(db, conversation.title, graph_id)
         return ConversationSchema(**result)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create conversation: {e}")
         raise HTTPException(
@@ -51,6 +86,7 @@ async def create_conversation(
 
 @router.get("/conversations", response_model=list[ConversationSchema])
 async def list_conversations(
+    graph_id: UUID | None = FastAPIQuery(None),
     db: AsyncSession = Depends(get_db_session),
 ) -> list[ConversationSchema]:
     """
@@ -63,7 +99,7 @@ async def list_conversations(
         list[ConversationSchema]: List of conversations.
     """
     try:
-        result = await chat_service.list_conversations(db)
+        result = await chat_service.list_conversations(db, graph_id)
         return [ConversationSchema(**conv) for conv in result]
     except Exception as e:
         logger.error(f"Failed to list conversations: {e}")

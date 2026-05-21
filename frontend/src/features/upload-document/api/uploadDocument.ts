@@ -15,6 +15,7 @@ export interface UploadDocumentInput {
 export interface UploadResponse {
   status: string;
   document_id: string;
+  graph_id: string;
   filename: string;
   progress: number;
   message: string;
@@ -26,6 +27,7 @@ export interface UploadResponse {
 
 export interface IndexProgress {
   document_id: string;
+  graph_id: string;
   filename: string;
   status: string;
   progress: number;
@@ -45,6 +47,7 @@ export interface IndexProgress {
 
 export interface IndexedDocumentStatus {
   id: string;
+  graph_id: string | null;
   filename: string;
   indexed_at: string;
   status: string;
@@ -60,6 +63,34 @@ export interface IndexStatusResponse {
 export interface DeleteCurrentIndexResponse {
   status: string;
   message: string;
+}
+
+export interface IndexedGraphStatus {
+  id: string;
+  name: string;
+  source_filename: string;
+  status: string;
+  entity_count: number | null;
+  relationship_count: number | null;
+  index_chat_provider: string | null;
+  index_embed_provider: string | null;
+  index_chat_model: string | null;
+  index_embed_model: string | null;
+  is_active: boolean;
+  created_at: string;
+  indexed_at: string | null;
+  activated_at: string | null;
+  error: string | null;
+}
+
+export interface IndexedGraphListResponse {
+  graphs: IndexedGraphStatus[];
+  active_graph_id: string | null;
+  total_graphs: number;
+}
+
+export interface ActivateGraphResponse {
+  graph: IndexedGraphStatus;
 }
 
 async function fetcher<T>(url: string): Promise<T> {
@@ -112,6 +143,62 @@ export function useIndexStatus() {
     isLoading,
     isError: error,
     mutate,
+  };
+}
+
+export function useIndexedGraphs() {
+  const { data, error, isLoading, mutate } = useSWR<IndexedGraphListResponse>(
+    API_ENDPOINTS.INDEX.GRAPHS,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      refreshInterval: 30000,
+    }
+  );
+
+  return {
+    graphList: data,
+    graphs: data?.graphs,
+    activeGraphId: data?.active_graph_id ?? null,
+    isLoading,
+    isError: error,
+    mutate,
+  };
+}
+
+export function useActiveGraph() {
+  const { data, error, isLoading, mutate } = useSWR<IndexedGraphStatus | null>(
+    API_ENDPOINTS.INDEX.ACTIVE_GRAPH,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      refreshInterval: 30000,
+    }
+  );
+
+  return {
+    activeGraph: data,
+    isLoading,
+    isError: error,
+    mutate,
+  };
+}
+
+export function useActivateGraph() {
+  const { trigger, isMutating, error } = useSWRMutation(
+    API_ENDPOINTS.INDEX.GRAPHS,
+    async (_url: string, { arg }: { arg: string }) => {
+      const response = await apiClient.post<ActivateGraphResponse>(
+        API_ENDPOINTS.INDEX.ACTIVATE_GRAPH(arg)
+      );
+      return response.data;
+    }
+  );
+
+  return {
+    activateGraph: trigger,
+    isActivating: isMutating,
+    error,
   };
 }
 

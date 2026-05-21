@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -21,8 +23,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import ModelProvider, settings
 from app.database import async_session_maker, get_db_session
 from app.schemas import (
+    ActivateGraphResponseSchema,
     DeleteCurrentIndexResponseSchema,
     DocumentStatusSchema,
+    IndexedGraphListResponseSchema,
+    IndexedGraphSchema,
     IndexProgressSchema,
     IndexStatusResponseSchema,
     UploadResponseSchema,
@@ -30,6 +35,7 @@ from app.schemas import (
 from app.services.graphrag import (
     GeminiConfigurationError,
     GraphRAGError,
+    GraphRAGService,
     IndexingError,
     OllamaConnectionError,
     OpenRouterConfigurationError,
@@ -45,6 +51,7 @@ class IndexJob:
     """In-memory progress state for one indexing job."""
 
     document_id: UUID
+    graph_id: UUID
     filename: str
     status: str
     progress: int
@@ -64,6 +71,163 @@ class IndexJob:
 
 index_jobs: dict[UUID, IndexJob] = {}
 index_lock = asyncio.Lock()
+
+
+def graph_row_to_schema(row: object) -> IndexedGraphSchema:
+    """Convert a SQLAlchemy mapping/row into an indexed graph schema."""
+    data = dict(row._mapping if hasattr(row, "_mapping") else row)  # type: ignore[arg-type]
+    return IndexedGraphSchema(**data)
+
+
+async def infer_migrated_graph_filename(db: AsyncSession) -> str:
+    """Infer a user-facing filename for a migrated root GraphRAG workspace."""
+    result = await db.execute(
+        text("""
+            SELECT filename
+            FROM indexed_documents
+            WHERE filename IS NOT NULL AND filename <> ''
+            ORDER BY indexed_at DESC
+            LIMIT 1
+        """)
+    )
+    row = result.fetchone()
+    if row and row.filename:
+        return str(row.filename)
+
+    input_dir = graphrag_service.base_graphrag_root / "input"
+    input_files = sorted(
+        input_dir.glob("*.txt"),
+        key=lambda path: (-path.stat().st_mtime, path.name),
+    )
+    if input_files:
+        return input_files[0].name
+
+    return "Migrated index"
+
+
+async def repair_legacy_graph_names(db: AsyncSession) -> None:
+    """Replace old placeholder graph labels with the original indexed filename."""
+    inferred_filename = await infer_migrated_graph_filename(db)
+    await db.execute(
+        text("""
+            UPDATE indexed_graphs
+            SET name = :filename,
+                source_filename = :filename
+            WHERE name = 'Legacy graph'
+               OR source_filename = 'legacy-index'
+        """),
+        {"filename": inferred_filename},
+    )
+
+
+async def ensure_legacy_graph_catalog(db: AsyncSession) -> None:
+    """Import a pre-multi-graph root output directory as one graph catalog row."""
+    count_result = await db.execute(text("SELECT COUNT(*) FROM indexed_graphs"))
+    if (count_result.scalar() or 0) > 0:
+        await repair_legacy_graph_names(db)
+        return
+
+    root_output = graphrag_service.base_graphrag_root / "output"
+    if not (root_output / "entities.parquet").exists() and not (
+        root_output / "relationships.parquet"
+    ).exists():
+        return
+
+    graph_id = uuid4()
+    workspace_path = graphrag_service.graph_workspace_path(graph_id)
+    graphrag_service.ensure_workspace_config(workspace_path)
+    for directory in ("input", "output", "cache"):
+        source = graphrag_service.base_graphrag_root / directory
+        target = workspace_path / directory
+        if source.exists():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+
+    source_filename = await infer_migrated_graph_filename(db)
+    stats = graphrag_service.get_stats()
+    await db.execute(
+        text("""
+            INSERT INTO indexed_graphs (
+                id, name, source_filename, status, entity_count, relationship_count,
+                workspace_path, is_active, indexed_at, activated_at
+            )
+            VALUES (
+                :id, :name, :source_filename, 'completed', :entity_count,
+                :relationship_count, :workspace_path, TRUE, CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+        """),
+        {
+            "id": graph_id,
+            "name": source_filename,
+            "source_filename": source_filename,
+            "entity_count": stats.get("entity_count", 0),
+            "relationship_count": stats.get("relationship_count", 0),
+            "workspace_path": str(workspace_path),
+        },
+    )
+    await db.execute(
+        text("""
+            UPDATE indexed_documents
+            SET graph_id = :graph_id
+            WHERE graph_id IS NULL
+        """),
+        {"graph_id": graph_id},
+    )
+    await db.execute(
+        text("""
+            UPDATE conversations
+            SET graph_id = :graph_id
+            WHERE graph_id IS NULL
+        """),
+        {"graph_id": graph_id},
+    )
+    graphrag_service.activate_graph_workspace(graph_id, workspace_path)
+    await repair_legacy_graph_names(db)
+
+
+async def get_graph_row(db: AsyncSession, graph_id: UUID):
+    """Fetch one indexed graph row."""
+    result = await db.execute(
+        text("""
+            SELECT id, name, source_filename, status, entity_count, relationship_count,
+                   index_chat_provider, index_embed_provider, index_chat_model,
+                   index_embed_model, is_active, created_at, indexed_at, activated_at, error,
+                   workspace_path
+            FROM indexed_graphs
+            WHERE id = :id
+        """),
+        {"id": graph_id},
+    )
+    return result.fetchone()
+
+
+async def activate_graph(db: AsyncSession, graph_id: UUID) -> IndexedGraphSchema:
+    """Activate a completed graph in the database and GraphRAG service."""
+    row = await get_graph_row(db, graph_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph not found")
+    if row.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only completed graphs can be activated",
+        )
+
+    graphrag_service.activate_graph_workspace(graph_id, Path(row.workspace_path))
+    await db.execute(text("UPDATE indexed_graphs SET is_active = FALSE"))
+    await db.execute(
+        text("""
+            UPDATE indexed_graphs
+            SET is_active = TRUE, activated_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+        """),
+        {"id": graph_id},
+    )
+    await db.commit()
+
+    refreshed = await get_graph_row(db, graph_id)
+    if refreshed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph not found")
+    return graph_row_to_schema(refreshed)
 
 
 def update_index_job(
@@ -162,8 +326,52 @@ async def update_document_row(
         await session.commit()
 
 
+async def update_graph_row(
+    graph_id: UUID,
+    *,
+    status_value: str,
+    entity_count: int | None = None,
+    relationship_count: int | None = None,
+    error: str | None = None,
+) -> None:
+    """Persist indexing status for a graph catalog row."""
+    async with async_session_maker() as session:
+        if status_value == "completed":
+            query = text("""
+                UPDATE indexed_graphs
+                SET status = :status,
+                    entity_count = :entity_count,
+                    relationship_count = :relationship_count,
+                    indexed_at = CURRENT_TIMESTAMP,
+                    error = :error
+                WHERE id = :id
+            """)
+        else:
+            query = text("""
+                UPDATE indexed_graphs
+                SET status = :status,
+                    entity_count = :entity_count,
+                    relationship_count = :relationship_count,
+                    error = :error
+                WHERE id = :id
+            """)
+
+        await session.execute(
+            query,
+            {
+                "id": graph_id,
+                "status": status_value,
+                "entity_count": entity_count,
+                "relationship_count": relationship_count,
+                "error": error,
+            },
+        )
+        await session.commit()
+
+
 async def run_indexing_job(
     document_id: UUID,
+    graph_id: UUID,
     filename: str,
     content: bytes,
     index_chat_provider: ModelProvider,
@@ -208,13 +416,23 @@ async def run_indexing_job(
                     f"{index_embed_provider} embedding availability"
                 ),
             )
-            await graphrag_service.check_provider_health(index_chat_provider, model_kind="chat")
-            await graphrag_service.check_provider_health(
+            await update_graph_row(graph_id, status_value="processing")
+            workspace_path = graphrag_service.graph_workspace_path(graph_id)
+            if not workspace_path.resolve().is_relative_to(
+                graphrag_service.graphs_root.resolve()
+            ):
+                raise IndexingError("Refusing to index outside the managed graph workspace root")
+
+            worker = GraphRAGService()
+            worker.use_workspace(workspace_path, graph_id)
+
+            await worker.check_provider_health(index_chat_provider, model_kind="chat")
+            await worker.check_provider_health(
                 index_embed_provider,
                 model_kind="embedding",
             )
 
-            stats = await graphrag_service.index_document(
+            stats = await worker.index_document(
                 filename,
                 content,
                 progress_callback=update_progress,
@@ -224,6 +442,12 @@ async def run_indexing_job(
 
             await update_document_row(
                 document_id,
+                status_value="completed",
+                entity_count=stats["entity_count"],
+                relationship_count=stats["relationship_count"],
+            )
+            await update_graph_row(
+                graph_id,
                 status_value="completed",
                 entity_count=stats["entity_count"],
                 relationship_count=stats["relationship_count"],
@@ -239,6 +463,7 @@ async def run_indexing_job(
         except Exception as e:
             logger.exception("Indexing job failed for %s", filename)
             await update_document_row(document_id, status_value="failed")
+            await update_graph_row(graph_id, status_value="failed", error=str(e))
             update_index_job(
                 document_id,
                 status="failed",
@@ -288,44 +513,11 @@ async def upload_document(
         if len(content) == 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty")
 
-        # Save a document row before the background job starts
+        # Save graph and document rows before the background job starts
         document_id = uuid4()
-        index_jobs[document_id] = IndexJob(
-            document_id=document_id,
-            filename=file.filename,
-            status="queued",
-            progress=0,
-            message="Document queued for indexing",
-        )
-
-        if settings.graphrag_replace_corpus_on_upload:
-            await db.execute(
-                text("""
-                    UPDATE indexed_documents
-                    SET status = 'superseded'
-                    WHERE status IN ('processing', 'completed')
-                """)
-            )
-
-        query = text("""
-            INSERT INTO indexed_documents (
-                id, filename, status, entity_count, relationship_count
-            )
-            VALUES (:id, :filename, :status, :entity_count, :relationship_count)
-        """)
-
-        await db.execute(
-            query,
-            {
-                "id": document_id,
-                "filename": file.filename,
-                "status": "processing",
-                "entity_count": None,
-                "relationship_count": None,
-            },
-        )
-        await db.commit()
-
+        graph_id = uuid4()
+        workspace_path = graphrag_service.graph_workspace_path(graph_id)
+        graph_name = file.filename
         active_index_chat_provider = (
             index_chat_provider or model_provider or settings.get_index_chat_provider()
         )
@@ -334,9 +526,69 @@ async def upload_document(
             or (model_provider if index_chat_provider is None else None)
             or settings.get_index_embed_provider()
         )
+        index_jobs[document_id] = IndexJob(
+            document_id=document_id,
+            graph_id=graph_id,
+            filename=file.filename,
+            status="queued",
+            progress=0,
+            message="Document queued for indexing",
+        )
+
+        await db.execute(
+            text("""
+                INSERT INTO indexed_graphs (
+                    id, name, source_filename, status, entity_count, relationship_count,
+                    index_chat_provider, index_embed_provider, index_chat_model,
+                    index_embed_model, workspace_path, is_active
+                )
+                VALUES (
+                    :id, :name, :source_filename, 'queued', NULL, NULL,
+                    :index_chat_provider, :index_embed_provider, :index_chat_model,
+                    :index_embed_model, :workspace_path, FALSE
+                )
+            """),
+            {
+                "id": graph_id,
+                "name": graph_name,
+                "source_filename": file.filename,
+                "index_chat_provider": active_index_chat_provider,
+                "index_embed_provider": active_index_embed_provider,
+                "index_chat_model": settings.get_model_name(active_index_chat_provider, "chat"),
+                "index_embed_model": settings.get_model_name(
+                    active_index_embed_provider,
+                    "embedding",
+                ),
+                "workspace_path": str(workspace_path),
+            },
+        )
+
+        query = text("""
+            INSERT INTO indexed_documents (
+                id, graph_id, filename, status, entity_count, relationship_count
+            )
+            VALUES (
+                :id, :graph_id, :filename, :status, :entity_count, :relationship_count
+            )
+        """)
+
+        await db.execute(
+            query,
+            {
+                "id": document_id,
+                "graph_id": graph_id,
+                "filename": file.filename,
+                "status": "processing",
+                "entity_count": None,
+                "relationship_count": None,
+            },
+        )
+        await db.commit()
+
         background_tasks.add_task(
             run_indexing_job,
             document_id,
+            graph_id,
             file.filename,
             content,
             active_index_chat_provider,
@@ -352,6 +604,7 @@ async def upload_document(
         return UploadResponseSchema(
             status="queued",
             document_id=document_id,
+            graph_id=graph_id,
             filename=file.filename,
             progress=0,
             message="Document queued for indexing",
@@ -395,25 +648,143 @@ async def upload_document(
         ) from e
 
 
+@router.get("/graphs", response_model=IndexedGraphListResponseSchema)
+async def list_indexed_graphs(
+    db: AsyncSession = Depends(get_db_session),
+) -> IndexedGraphListResponseSchema:
+    """List all graph catalog entries and the active graph id."""
+    try:
+        await ensure_legacy_graph_catalog(db)
+        result = await db.execute(
+            text("""
+                SELECT id, name, source_filename, status, entity_count, relationship_count,
+                       index_chat_provider, index_embed_provider, index_chat_model,
+                       index_embed_model, is_active, created_at, indexed_at, activated_at, error
+                FROM indexed_graphs
+                ORDER BY created_at DESC
+            """)
+        )
+        graphs = [graph_row_to_schema(row) for row in result.fetchall()]
+        active_graph = next((graph for graph in graphs if graph.is_active), None)
+        return IndexedGraphListResponseSchema(
+            graphs=graphs,
+            active_graph_id=active_graph.id if active_graph else None,
+            total_graphs=len(graphs),
+        )
+    except Exception as e:
+        logger.error(f"Failed to list indexed graphs: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list indexed graphs",
+        ) from e
+
+
+@router.get("/graphs/active", response_model=IndexedGraphSchema | None)
+async def get_active_graph(
+    db: AsyncSession = Depends(get_db_session),
+) -> IndexedGraphSchema | None:
+    """Return the active graph catalog entry, if any."""
+    try:
+        await ensure_legacy_graph_catalog(db)
+        result = await db.execute(
+            text("""
+                SELECT id, name, source_filename, status, entity_count, relationship_count,
+                       index_chat_provider, index_embed_provider, index_chat_model,
+                       index_embed_model, is_active, created_at, indexed_at, activated_at, error
+                FROM indexed_graphs
+                WHERE is_active = TRUE
+                LIMIT 1
+            """)
+        )
+        row = result.fetchone()
+        return graph_row_to_schema(row) if row else None
+    except Exception as e:
+        logger.error(f"Failed to get active graph: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get active graph",
+        ) from e
+
+
+@router.post("/graphs/{graph_id}/activate", response_model=ActivateGraphResponseSchema)
+async def activate_indexed_graph(
+    graph_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+) -> ActivateGraphResponseSchema:
+    """Activate a completed indexed graph for graph view and chat queries."""
+    try:
+        await ensure_legacy_graph_catalog(db)
+        graph = await activate_graph(db, graph_id)
+        return ActivateGraphResponseSchema(graph=graph)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to activate graph {graph_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to activate indexed graph",
+        ) from e
+
+
 @router.delete("/current", response_model=DeleteCurrentIndexResponseSchema)
 async def delete_current_index(
     db: AsyncSession = Depends(get_db_session),
 ) -> DeleteCurrentIndexResponseSchema:
-    """Delete the currently loaded GraphRAG index and mark indexed documents as deleted."""
+    """Delete the active indexed graph and mark its documents as deleted."""
     async with index_lock:
         try:
-            graphrag_service.delete_current_index()
+            await ensure_legacy_graph_catalog(db)
+            active_result = await db.execute(
+                text("""
+                    SELECT id, workspace_path
+                    FROM indexed_graphs
+                    WHERE is_active = TRUE
+                    LIMIT 1
+                """)
+            )
+            active_row = active_result.fetchone()
+            if active_row is None:
+                return DeleteCurrentIndexResponseSchema(
+                    status="deleted",
+                    message="No active indexed graph was loaded",
+                )
+
+            graph_id = active_row.id
+            workspace_path = Path(active_row.workspace_path)
+            if workspace_path.exists() and workspace_path.is_relative_to(
+                graphrag_service.graphs_root
+            ):
+                shutil.rmtree(workspace_path)
+
             await db.execute(
                 text("""
                     UPDATE indexed_documents
                     SET status = 'deleted',
                         entity_count = NULL,
                         relationship_count = NULL
-                    WHERE status IN ('queued', 'processing', 'completed', 'superseded', 'failed')
+                    WHERE graph_id = :graph_id
                 """)
+                ,
+                {"graph_id": graph_id},
+            )
+            await db.execute(
+                text("""
+                    UPDATE indexed_graphs
+                    SET status = 'deleted',
+                        is_active = FALSE,
+                        entity_count = NULL,
+                        relationship_count = NULL
+                    WHERE id = :graph_id
+                """),
+                {"graph_id": graph_id},
             )
             await db.commit()
-            index_jobs.clear()
+            for document_id, job in list(index_jobs.items()):
+                if job.graph_id == graph_id:
+                    index_jobs.pop(document_id, None)
+            graphrag_service.active_graph_id = None
+            graphrag_service._invalidate_cached_index()
 
             return DeleteCurrentIndexResponseSchema(
                 status="deleted",
@@ -448,6 +819,7 @@ async def get_index_progress(document_id: UUID) -> IndexProgressSchema:
 
     return IndexProgressSchema(
         document_id=job.document_id,
+        graph_id=job.graph_id,
         filename=job.filename,
         status=job.status,
         progress=job.progress,
@@ -481,7 +853,7 @@ async def get_index_status(
     """
     try:
         query = text("""
-            SELECT id, filename, indexed_at, status, entity_count, relationship_count
+            SELECT id, graph_id, filename, indexed_at, status, entity_count, relationship_count
             FROM indexed_documents
             ORDER BY indexed_at DESC
         """)
@@ -492,11 +864,12 @@ async def get_index_status(
         documents = [
             DocumentStatusSchema(
                 id=row[0],
-                filename=row[1],
-                indexed_at=row[2],
-                status=row[3],
-                entity_count=row[4],
-                relationship_count=row[5],
+                graph_id=row[1],
+                filename=row[2],
+                indexed_at=row[3],
+                status=row[4],
+                entity_count=row[5],
+                relationship_count=row[6],
             )
             for row in rows
         ]

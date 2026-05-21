@@ -7,7 +7,7 @@ import { cn, FILE_UPLOAD, type ModelProvider } from "@/shared";
 import { getIndexProgress, useUploadDocument } from "../api/uploadDocument";
 
 interface UploadButtonProps {
-  onUploadComplete?: () => void;
+  onUploadComplete?: (graphId: string) => void;
   indexChatProvider: ModelProvider;
   indexEmbedProvider: ModelProvider;
 }
@@ -57,7 +57,7 @@ export function UploadButton({
         if (current.status === "completed") {
           setStatus("success");
           setPollingDocumentId(null);
-          onUploadComplete?.();
+          onUploadComplete?.(current.graph_id);
 
           setTimeout(() => {
             setStatus("idle");

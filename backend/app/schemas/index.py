@@ -18,6 +18,7 @@ class UploadResponseSchema(BaseModel):
 
     status: str = "queued"
     document_id: UUID
+    graph_id: UUID
     filename: str
     progress: int = 0
     message: str = "Document queued for indexing"
@@ -28,6 +29,7 @@ class IndexProgressSchema(BaseModel):
     """Schema for a running indexing job."""
 
     document_id: UUID
+    graph_id: UUID
     filename: str
     status: str
     progress: int = Field(ge=0, le=100)
@@ -49,6 +51,7 @@ class DocumentStatusSchema(BaseModel):
     """Schema for indexed document status."""
 
     id: UUID
+    graph_id: UUID | None = None
     filename: str
     indexed_at: datetime
     status: str
@@ -68,3 +71,37 @@ class DeleteCurrentIndexResponseSchema(BaseModel):
 
     status: str = "deleted"
     message: str
+
+
+class IndexedGraphSchema(BaseModel):
+    """Schema for one indexed graph catalog entry."""
+
+    id: UUID
+    name: str
+    source_filename: str
+    status: str
+    entity_count: int | None = None
+    relationship_count: int | None = None
+    index_chat_provider: str | None = None
+    index_embed_provider: str | None = None
+    index_chat_model: str | None = None
+    index_embed_model: str | None = None
+    is_active: bool = False
+    created_at: datetime
+    indexed_at: datetime | None = None
+    activated_at: datetime | None = None
+    error: str | None = None
+
+
+class IndexedGraphListResponseSchema(BaseModel):
+    """Schema for listing indexed graphs."""
+
+    graphs: list[IndexedGraphSchema] = Field(default_factory=list)
+    active_graph_id: UUID | None = None
+    total_graphs: int
+
+
+class ActivateGraphResponseSchema(BaseModel):
+    """Schema returned after activating an indexed graph."""
+
+    graph: IndexedGraphSchema

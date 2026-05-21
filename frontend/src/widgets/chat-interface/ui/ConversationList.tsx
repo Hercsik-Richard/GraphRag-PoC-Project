@@ -11,19 +11,23 @@ import {
 } from "@/entities/conversation";
 
 interface ConversationListProps {
+  graphId: string | null;
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
 }
 
 export function ConversationList({
+  graphId,
   selectedId,
   onSelect,
 }: ConversationListProps) {
-  const { conversations, isLoading, mutate } = useConversations();
-  const { createConversation, isCreating } = useCreateConversation();
+  const { conversations, isLoading, mutate } = useConversations(graphId);
+  const { createConversation, isCreating } = useCreateConversation(graphId);
   const { deleteConversation, isDeleting } = useDeleteConversation();
 
   const handleCreate = async () => {
+    if (!graphId) return;
+
     try {
       const newConv = await createConversation({
         title: `New Conversation ${new Date().toLocaleTimeString()}`,
@@ -46,7 +50,7 @@ export function ConversationList({
       await deleteConversation(id);
       mutate(); // Refresh list
       if (selectedId === id) {
-        onSelect(conversations?.[0]?.id ?? "");
+        onSelect(conversations?.find((conversation) => conversation.id !== id)?.id ?? null);
       }
     } catch (error) {
       console.error("Failed to delete conversation:", error);
@@ -65,12 +69,12 @@ export function ConversationList({
               Conversations
             </h2>
             <p className="text-xs text-muted-foreground">
-              Switch between GraphRag threads or start a new query.
+              Switch between threads for the active graph.
             </p>
           </div>
           <button
             onClick={handleCreate}
-            disabled={isCreating}
+            disabled={isCreating || !graphId}
             className={cn(
               "inline-flex w-full items-center justify-center gap-2 rounded-lg border border-primary/25",
               "bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground",
@@ -86,7 +90,13 @@ export function ConversationList({
 
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          {isLoading ? (
+          {!graphId ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/60 bg-card py-10 text-center text-sm text-muted-foreground">
+              <MessageSquare className="mb-3 h-12 w-12 opacity-50" />
+              <p>No active graph</p>
+              <p className="mt-1 text-xs">Select or index a graph to chat.</p>
+            </div>
+          ) : isLoading ? (
             <div className="flex h-full items-center justify-center">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
             </div>

@@ -20,9 +20,12 @@ from app.schemas.graph import (
     NodePositionSchema,
 )
 from app.schemas.index import (
+    ActivateGraphResponseSchema,
     DeleteCurrentIndexResponseSchema,
     DocumentStatsSchema,
     DocumentStatusSchema,
+    IndexedGraphListResponseSchema,
+    IndexedGraphSchema,
     IndexProgressSchema,
     IndexStatusResponseSchema,
     UploadResponseSchema,
@@ -47,9 +50,12 @@ __all__ = [
     "NodeDataSchema",
     "NodePositionSchema",
     # Index schemas
+    "ActivateGraphResponseSchema",
     "DeleteCurrentIndexResponseSchema",
     "DocumentStatsSchema",
     "DocumentStatusSchema",
+    "IndexedGraphListResponseSchema",
+    "IndexedGraphSchema",
     "IndexProgressSchema",
     "IndexStatusResponseSchema",
     "UploadResponseSchema",

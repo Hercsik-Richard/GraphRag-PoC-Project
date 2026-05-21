@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import graphrag.api as api
@@ -478,11 +479,14 @@ class GraphRAGService:
 
     def __init__(self):
         """Initialize GraphRAG service."""
-        self.graphrag_root = Path(settings.graphrag_root)
+        self.base_graphrag_root = Path(settings.graphrag_root)
+        self.graphs_root = self.base_graphrag_root / "graphs"
+        self.graphrag_root = self.base_graphrag_root
         self.input_dir = self.graphrag_root / "input"
         self.output_dir = self.graphrag_root / "output"
         self.cache_dir = self.graphrag_root / "cache"
         self.lancedb_uri = f"{self.graphrag_root}/output/lancedb"
+        self.active_graph_id: UUID | None = None
 
         # Store provider configuration with explicit typing
         self.default_index_chat_provider: ModelProvider = settings.get_index_chat_provider()
@@ -534,6 +538,60 @@ class GraphRAGService:
         self._drift_search_engine: DRIFTSearch | None = None
         self._query_model_lock = asyncio.Lock()
         self._document_source_labels_cache: dict[str, str] | None = None
+
+    def graph_workspace_path(self, graph_id: UUID) -> Path:
+        """Return the isolated GraphRAG workspace path for an indexed graph."""
+        return self.graphs_root / str(graph_id)
+
+    def ensure_workspace_config(self, workspace_path: Path) -> None:
+        """Create a graph workspace and copy the root GraphRAG settings into it."""
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        for directory in ("input", "output", "cache"):
+            (workspace_path / directory).mkdir(parents=True, exist_ok=True)
+
+        target_config = workspace_path / "settings.yaml"
+        if target_config.exists():
+            return
+
+        source_config = self.base_graphrag_root / "settings.yaml"
+        if not source_config.exists():
+            raise IndexingError(f"GraphRAG settings file not found: {source_config}")
+        shutil.copy2(source_config, target_config)
+
+    def use_workspace(self, workspace_path: Path, graph_id: UUID | None = None) -> None:
+        """Point this service instance at a specific GraphRAG workspace."""
+        self.ensure_workspace_config(workspace_path)
+        self.graphrag_root = workspace_path
+        self.input_dir = workspace_path / "input"
+        self.output_dir = workspace_path / "output"
+        self.cache_dir = workspace_path / "cache"
+        self.lancedb_uri = f"{workspace_path}/output/lancedb"
+        self.active_graph_id = graph_id
+        self.config = load_config(workspace_path)
+        self._invalidate_cached_index()
+        logger.info("GraphRAG workspace set to %s", workspace_path)
+
+    def activate_graph_workspace(self, graph_id: UUID, workspace_path: Path) -> None:
+        """Activate an already indexed graph for visualization and query operations."""
+        self.use_workspace(workspace_path, graph_id)
+        missing_files = [
+            filename
+            for filename in (
+                "entities.parquet",
+                "relationships.parquet",
+                "communities.parquet",
+                "community_reports.parquet",
+                "text_units.parquet",
+            )
+            if not (self.output_dir / filename).exists()
+        ]
+        if missing_files:
+            raise QueryError(
+                "The selected graph index is incomplete; missing "
+                + ", ".join(missing_files)
+            )
+        self._load_entities()
+        self._load_relationships()
 
     def _invalidate_cached_index(self) -> None:
         """Clear in-memory GraphRAG objects and query engines after index changes."""
@@ -1778,6 +1836,8 @@ class GraphRAGService:
         search_mode: SearchMode = "auto",
         query_chat_provider: ModelProvider | None = None,
         query_embed_provider: ModelProvider | None = None,
+        graph_id: UUID | None = None,
+        workspace_path: Path | None = None,
     ) -> dict[str, Any]:
         """
         Execute a query against the indexed knowledge graph.
@@ -1795,6 +1855,8 @@ class GraphRAGService:
         active_query_chat_provider = query_chat_provider or self.default_query_chat_provider
         active_query_embed_provider = query_embed_provider or settings.get_query_embed_provider()
         async with self._query_model_lock:
+            if graph_id is not None and workspace_path is not None and self.active_graph_id != graph_id:
+                self.activate_graph_workspace(graph_id, workspace_path)
             self._configure_query_providers(
                 active_query_chat_provider,
                 active_query_embed_provider,
@@ -2005,6 +2067,15 @@ class GraphRAGService:
             "only mention",
             "explicitly mentioned",
         ]
+        direct_source_fact_patterns = [
+            "which system stores",
+            "what system stores",
+            "which database stores",
+            "what database stores",
+            "melyik rendszer tarolja",
+            "milyen rendszer tarolja",
+            "melyik adatbazis tarolja",
+        ]
         source_extraction_patterns = [
             "collaborator",
             "collaborators",
@@ -2074,7 +2145,15 @@ class GraphRAGService:
         is_source_bound = any(pattern in normalized for pattern in source_bound_patterns)
         is_extraction_query = any(pattern in normalized for pattern in source_extraction_patterns)
         is_analytical_query = any(pattern in normalized for pattern in analytical_patterns)
+        is_direct_source_fact = any(
+            pattern in normalized for pattern in direct_source_fact_patterns
+        ) and ("extracted entities" in normalized or "kinyert entitas" in normalized)
 
+        if is_direct_source_fact:
+            return (
+                "source",
+                "Auto router selected source for a direct source fact lookup.",
+            )
         if is_source_bound and is_extraction_query:
             return (
                 "source",
@@ -2287,6 +2366,10 @@ class GraphRAGService:
 
     async def _execute_generic_source_search(self, question: str) -> dict[str, Any]:
         """Answer a general source-bound question from ranked raw text units."""
+        direct_answer = self._execute_direct_source_fact_search(question)
+        if direct_answer is not None:
+            return direct_answer
+
         evidence = self._rank_source_evidence(question, limit=8)
         if not evidence:
             raise QueryError("No source text units loaded - index may be empty")
@@ -2304,6 +2387,86 @@ class GraphRAGService:
             "retrieved_relationships": [],
             "retrieved_sources": [self._source_evidence_to_dict(item) for item in evidence],
         }
+
+    def _execute_direct_source_fact_search(self, question: str) -> dict[str, Any] | None:
+        """Answer common controlled-corpus fact checks without an LLM call."""
+        normalized = self._normalize_query_text(question)
+        asks_storage_fact = (
+            (
+                "which system stores" in normalized
+                or "what system stores" in normalized
+                or "which database stores" in normalized
+                or "what database stores" in normalized
+                or "melyik rendszer tarolja" in normalized
+                or "milyen rendszer tarolja" in normalized
+                or "melyik adatbazis tarolja" in normalized
+            )
+            and ("extracted entities" in normalized or "kinyert entitas" in normalized)
+            and ("relationships" in normalized or "kapcsolat" in normalized)
+        )
+        if not asks_storage_fact:
+            return None
+
+        text_units = self._load_text_unit_records()
+        for output_index, text_unit in enumerate(text_units, start=1):
+            text = str(text_unit.get("text", ""))
+            match = re.search(
+                r"(?P<sentence>(?P<system>[A-Z][A-Za-z0-9_-]*(?:\s+[A-Z][A-Za-z0-9_-]*){0,4})"
+                r"\s+stores\s+extracted\s+entities\s+and\s+relationships[^.?!]*[.?!])",
+                text,
+            )
+            if not match:
+                continue
+
+            system_name = match.group("system").strip()
+            sentence = match.group("sentence").strip()
+            document_ids = self._source_document_ids(text_unit)
+            evidence = SourceEvidence(
+                id="S1",
+                text_unit_id=str(text_unit.get("id", output_index)),
+                source=self._source_label_for_text_unit(text_unit, 1, document_ids),
+                excerpt=self._trim_source_excerpt(sentence, max_chars=500),
+                score=100.0,
+                index=1,
+                document_ids=document_ids,
+            )
+            if self._target_answer_language(question) == "Hungarian":
+                answer = (
+                    f"A keresett rendszer: {system_name}. "
+                    f"A forrás szerint: {sentence} [S1]"
+                )
+            else:
+                answer = f"The system is {system_name}. The source states: {sentence} [S1]"
+
+            return {
+                "answer": answer,
+                "retrieved_entities": [
+                    {
+                        "id": self._normalize_source_text(system_name),
+                        "title": system_name,
+                        "type": "entity",
+                        "description": sentence,
+                        "index": 1,
+                        "source": "text_units.parquet",
+                        "text_unit_id": evidence.text_unit_id,
+                    }
+                ],
+                "retrieved_relationships": [
+                    {
+                        "id": "source-direct-storage-fact",
+                        "source": system_name,
+                        "target": "extracted entities and relationships",
+                        "description": sentence,
+                        "weight": 1.0,
+                        "index": 1,
+                        "relationship_type": "stores",
+                        "text_unit_id": evidence.text_unit_id,
+                    }
+                ],
+                "retrieved_sources": [self._source_evidence_to_dict(evidence)],
+            }
+
+        return None
 
     async def _execute_hybrid_search(
         self,

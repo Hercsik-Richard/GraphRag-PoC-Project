@@ -14,13 +14,48 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # SQL statements for table creation
+CREATE_INDEXED_GRAPHS_TABLE = """
+CREATE TABLE IF NOT EXISTS indexed_graphs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    source_filename TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'queued',
+    entity_count INTEGER,
+    relationship_count INTEGER,
+    index_chat_provider VARCHAR(20),
+    index_embed_provider VARCHAR(20),
+    index_chat_model TEXT,
+    index_embed_model TEXT,
+    workspace_path TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    indexed_at TIMESTAMP,
+    activated_at TIMESTAMP,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_indexed_graphs_status_created
+ON indexed_graphs(status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_indexed_graphs_active
+ON indexed_graphs(is_active)
+WHERE is_active = TRUE;
+"""
+
 CREATE_CONVERSATIONS_TABLE = """
 CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID REFERENCES indexed_graphs(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+ALTER_CONVERSATIONS_GRAPH = """
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS graph_id UUID REFERENCES indexed_graphs(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_conversations_graph_updated
+ON conversations(graph_id, updated_at DESC);
 """
 
 CREATE_MESSAGES_TABLE = """
@@ -50,6 +85,7 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS retrieved_sources JSON;
 CREATE_INDEXED_DOCUMENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS indexed_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID REFERENCES indexed_graphs(id) ON DELETE SET NULL,
     filename TEXT NOT NULL,
     indexed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(20) DEFAULT 'completed',
@@ -58,12 +94,18 @@ CREATE TABLE IF NOT EXISTS indexed_documents (
 );
 """
 
+ALTER_INDEXED_DOCUMENTS_GRAPH = """
+ALTER TABLE indexed_documents ADD COLUMN IF NOT EXISTS graph_id UUID REFERENCES indexed_graphs(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_indexed_documents_graph
+ON indexed_documents(graph_id);
+"""
+
 # SQL to check if tables exist
 CHECK_TABLES_EXIST = """
 SELECT table_name
 FROM information_schema.tables
 WHERE table_schema = 'public'
-AND table_name IN ('conversations', 'messages', 'indexed_documents');
+AND table_name IN ('conversations', 'messages', 'indexed_documents', 'indexed_graphs');
 """
 
 # SQL to get table schemas
@@ -84,6 +126,7 @@ DROP_TABLES = """
 DROP TABLE IF EXISTS messages CASCADE;
 DROP TABLE IF EXISTS conversations CASCADE;
 DROP TABLE IF EXISTS indexed_documents CASCADE;
+DROP TABLE IF EXISTS indexed_graphs CASCADE;
 """
 
 
@@ -114,7 +157,11 @@ def create_tables() -> None:
     """Create all application tables."""
     logger.info("Creating tables...")
     with sync_engine.begin() as conn:
+        conn.execute(text(CREATE_INDEXED_GRAPHS_TABLE))
+        logger.info("Created indexed_graphs table")
+
         conn.execute(text(CREATE_CONVERSATIONS_TABLE))
+        conn.execute(text(ALTER_CONVERSATIONS_GRAPH))
         logger.info("Created conversations table")
 
         conn.execute(text(CREATE_MESSAGES_TABLE))
@@ -122,6 +169,7 @@ def create_tables() -> None:
         logger.info("Created messages table")
 
         conn.execute(text(CREATE_INDEXED_DOCUMENTS_TABLE))
+        conn.execute(text(ALTER_INDEXED_DOCUMENTS_GRAPH))
         logger.info("Created indexed_documents table")
 
     logger.info("All tables created successfully")

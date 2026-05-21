@@ -8,9 +8,11 @@ import { GraphVisualization } from "@/widgets/graph-visualization";
 import { NodeDetails } from "@/widgets/node-details";
 import {
   UploadButton,
+  useActivateGraph,
   useDeleteCurrentIndex,
+  useIndexedGraphs,
   useIndexStatus,
-  type IndexedDocumentStatus,
+  type IndexedGraphStatus,
 } from "@/features/upload-document";
 import { useGraphData, useGraphStats, type GraphStats } from "@/entities/graph-node";
 import { cn, MODEL_PROVIDER_OPTIONS, type ModelProvider } from "@/shared";
@@ -27,13 +29,22 @@ const LEGACY_MODEL_STORAGE_KEYS = {
   query: "graphrag-query-model-provider",
 } as const;
 
-const ACTIVE_INDEX_STATUSES = new Set(["queued", "processing", "completed"]);
-
 function readSavedModelProvider(key: string, fallback: ModelProvider): ModelProvider {
   const saved = window.localStorage.getItem(key);
   return MODEL_PROVIDER_OPTIONS.some((option) => option.value === saved)
     ? (saved as ModelProvider)
     : fallback;
+}
+
+function graphDisplayName(graph: IndexedGraphStatus | null | undefined) {
+  if (!graph) return "No graph loaded";
+  if (graph.source_filename && graph.source_filename !== "legacy-index") {
+    return graph.source_filename;
+  }
+  if (graph.name && graph.name !== "Legacy graph") {
+    return graph.name;
+  }
+  return "Migrated index";
 }
 
 export function ChatPage() {
@@ -70,15 +81,22 @@ export function ChatPage() {
   );
   const { mutate: refreshGraph } = useGraphData();
   const { stats: graphStats, mutate: refreshGraphStats } = useGraphStats();
-  const { indexStatus, mutate: refreshIndexStatus } = useIndexStatus();
-  const { deleteCurrentIndex, isDeleting } = useDeleteCurrentIndex();
-  const activeDocument = useMemo(
-    () =>
-      indexStatus?.documents.find((document) =>
-        ACTIVE_INDEX_STATUSES.has(document.status)
-      ) ?? null,
-    [indexStatus]
+  const { mutate: refreshIndexStatus } = useIndexStatus();
+  const {
+    graphs = [],
+    activeGraphId,
+    mutate: refreshIndexedGraphs,
+  } = useIndexedGraphs();
+  const activeGraph = useMemo(
+    () => graphs.find((graph) => graph.id === activeGraphId) ?? null,
+    [graphs, activeGraphId]
   );
+  const { activateGraph, isActivating } = useActivateGraph();
+  const { deleteCurrentIndex, isDeleting } = useDeleteCurrentIndex();
+  const [
+    highlightedNodesFromRelationship,
+    setHighlightedNodesFromRelationship,
+  ] = useState<string[]>([]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -104,25 +122,47 @@ export function ChatPage() {
   }, [queryEmbedProvider]);
 
   const refreshGraphState = useCallback(async () => {
-    await Promise.all([refreshGraph(), refreshGraphStats(), refreshIndexStatus()]);
-  }, [refreshGraph, refreshGraphStats, refreshIndexStatus]);
+    await Promise.all([
+      refreshGraph(),
+      refreshGraphStats(),
+      refreshIndexStatus(),
+      refreshIndexedGraphs(),
+    ]);
+  }, [refreshGraph, refreshGraphStats, refreshIndexStatus, refreshIndexedGraphs]);
 
-  const handleUploadComplete = () => {
-    void refreshGraphState();
+  const handleActivateGraph = useCallback(
+    async (graphId: string) => {
+      if (!graphId || graphId === activeGraphId) return;
+
+      await activateGraph(graphId);
+      setSelectedConversationId(null);
+      setSelectedNodeId(null);
+      setHighlightedNodesFromRelationship([]);
+      await refreshGraphState();
+    },
+    [activeGraphId, activateGraph, refreshGraphState]
+  );
+
+  const handleUploadComplete = (graphId: string) => {
+    void (async () => {
+      await activateGraph(graphId);
+      setSelectedConversationId(null);
+      setSelectedNodeId(null);
+      setHighlightedNodesFromRelationship([]);
+      await refreshGraphState();
+    })();
   };
 
   const handleDeleteCurrentGraph = async () => {
-    if (!activeDocument && !graphStats?.indexed) return;
+    if (!activeGraph && !graphStats?.indexed) return;
     if (!confirm("Delete the currently indexed graph?")) return;
 
     await deleteCurrentIndex();
+    setSelectedConversationId(null);
+    setSelectedNodeId(null);
+    setHighlightedNodesFromRelationship([]);
     await refreshGraphState();
   };
-
-  const [
-    highlightedNodesFromRelationship,
-    setHighlightedNodesFromRelationship,
-  ] = useState<string[]>([]);
 
   const handleEntityClick = useCallback((entityLabel: string) => {
     // Graph nodes use entity names/titles as IDs, so use the label directly
@@ -157,9 +197,12 @@ export function ChatPage() {
     <div className="min-h-screen w-full bg-linear-to-br from-background via-muted/45 to-primary/10 text-foreground">
       <div className="mx-auto flex min-h-screen max-w-[96rem] flex-col gap-6 px-4 py-6 sm:px-6 lg:px-10">
         <GraphStatusBar
-          activeDocument={activeDocument}
+          graphs={graphs}
+          activeGraph={activeGraph}
           graphStats={graphStats}
+          isActivating={isActivating}
           isDeleting={isDeleting}
+          onActivate={handleActivateGraph}
           onDelete={handleDeleteCurrentGraph}
         />
 
@@ -222,6 +265,7 @@ export function ChatPage() {
           <aside className="lg:w-72">
             <div className="h-full rounded-xl border border-border/70 bg-card/95 shadow-[0_14px_30px_rgba(0,0,0,0.14)]">
               <ConversationList
+                graphId={activeGraphId}
                 selectedId={selectedConversationId}
                 onSelect={setSelectedConversationId}
               />
@@ -261,26 +305,29 @@ export function ChatPage() {
 }
 
 function GraphStatusBar({
-  activeDocument,
+  graphs,
+  activeGraph,
   graphStats,
+  isActivating,
   isDeleting,
+  onActivate,
   onDelete,
 }: {
-  activeDocument: IndexedDocumentStatus | null;
+  graphs: IndexedGraphStatus[];
+  activeGraph: IndexedGraphStatus | null;
   graphStats?: GraphStats;
+  isActivating: boolean;
   isDeleting: boolean;
+  onActivate: (graphId: string) => void;
   onDelete: () => void;
 }) {
-  const graphName = activeDocument
-    ? `${activeDocument.filename.replace(/\.[^/.]+$/, "")} graph`
-    : graphStats?.indexed
-      ? "Loaded graph"
-      : "No graph loaded";
-  const canDelete = Boolean(activeDocument || graphStats?.indexed) && !isDeleting;
+  const completedGraphs = graphs.filter((graph) => graph.status === "completed");
+  const graphName = graphDisplayName(activeGraph);
+  const canDelete = Boolean(activeGraph || graphStats?.indexed) && !isDeleting;
   const statusLabel =
-    activeDocument?.status === "processing" || activeDocument?.status === "queued"
+    activeGraph?.status === "processing" || activeGraph?.status === "queued"
       ? "Indexing"
-      : graphStats?.indexed
+      : activeGraph || graphStats?.indexed
         ? "Active"
         : "Empty";
 
@@ -295,12 +342,29 @@ function GraphStatusBar({
             Current Graph
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h2 className="truncate text-base font-bold text-foreground sm:text-lg">
-              {graphName}
-            </h2>
+            <select
+              value={activeGraph?.id ?? ""}
+              onChange={(event) => onActivate(event.target.value)}
+              disabled={isActivating || completedGraphs.length === 0}
+              className="max-w-full rounded-md border border-border/70 bg-background px-2 py-1 text-base font-bold text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:text-lg"
+              aria-label="Select active indexed graph"
+              title="Select active indexed graph"
+            >
+              {!activeGraph && <option value="">{graphName}</option>}
+              {completedGraphs.map((graph) => (
+                <option key={graph.id} value={graph.id}>
+                  {graphDisplayName(graph)}
+                </option>
+              ))}
+            </select>
             <span className="rounded-full border border-border/70 px-2 py-0.5 text-xs font-semibold text-muted-foreground">
               {statusLabel}
             </span>
+            {isActivating && (
+              <span className="text-xs font-semibold text-muted-foreground">
+                Loading graph...
+              </span>
+            )}
           </div>
         </div>
       </div>

@@ -19,9 +19,11 @@ async function fetcher<T>(url: string): Promise<T> {
 /**
  * Hook to fetch all conversations
  */
-export function useConversations() {
+export function useConversations(graphId: string | null) {
   const { data, error, isLoading, mutate } = useSWR<Conversation[]>(
-    API_ENDPOINTS.CHAT.CONVERSATIONS,
+    graphId
+      ? `${API_ENDPOINTS.CHAT.CONVERSATIONS}?graph_id=${graphId}`
+      : null,
     fetcher,
     {
       revalidateOnFocus: false,
@@ -61,11 +63,14 @@ export function useConversation(conversationId: string | null) {
 /**
  * Hook to create a new conversation
  */
-export function useCreateConversation() {
+export function useCreateConversation(graphId: string | null) {
   const { trigger, isMutating } = useSWRMutation(
-    API_ENDPOINTS.CHAT.CONVERSATIONS,
+    graphId ? API_ENDPOINTS.CHAT.CONVERSATIONS : null,
     async (url: string, { arg }: { arg: CreateConversationRequest }) => {
-      const response = await apiClient.post<Conversation>(url, arg);
+      const response = await apiClient.post<Conversation>(url, {
+        ...arg,
+        graph_id: graphId,
+      });
       return response.data;
     }
   );

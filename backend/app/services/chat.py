@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -23,7 +24,11 @@ class QueryProcessingError(Exception):
     pass
 
 
-async def create_conversation(db: AsyncSession, title: str) -> dict[str, Any]:
+async def create_conversation(
+    db: AsyncSession,
+    title: str,
+    graph_id: UUID | None = None,
+) -> dict[str, Any]:
     """
     Create a new conversation.
 
@@ -38,14 +43,20 @@ async def create_conversation(db: AsyncSession, title: str) -> dict[str, Any]:
     now = datetime.utcnow()
 
     query = text("""
-        INSERT INTO conversations (id, title, created_at, updated_at)
-        VALUES (:id, :title, :created_at, :updated_at)
-        RETURNING id, title, created_at, updated_at
+        INSERT INTO conversations (id, graph_id, title, created_at, updated_at)
+        VALUES (:id, :graph_id, :title, :created_at, :updated_at)
+        RETURNING id, graph_id, title, created_at, updated_at
     """)
 
     result = await db.execute(
         query,
-        {"id": conversation_id, "title": title, "created_at": now, "updated_at": now},
+        {
+            "id": conversation_id,
+            "graph_id": graph_id,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+        },
     )
 
     row = result.fetchone()
@@ -54,13 +65,17 @@ async def create_conversation(db: AsyncSession, title: str) -> dict[str, Any]:
 
     return {
         "id": row[0],
-        "title": row[1],
-        "created_at": row[2],
-        "updated_at": row[3],
+        "graph_id": row[1],
+        "title": row[2],
+        "created_at": row[3],
+        "updated_at": row[4],
     }
 
 
-async def list_conversations(db: AsyncSession) -> list[dict[str, Any]]:
+async def list_conversations(
+    db: AsyncSession,
+    graph_id: UUID | None = None,
+) -> list[dict[str, Any]]:
     """
     List all conversations ordered by updated_at desc.
 
@@ -70,21 +85,33 @@ async def list_conversations(db: AsyncSession) -> list[dict[str, Any]]:
     Returns:
         list: List of conversations.
     """
-    query = text("""
-        SELECT id, title, created_at, updated_at
-        FROM conversations
-        ORDER BY updated_at DESC
-    """)
+    if graph_id is None:
+        query = text("""
+            SELECT id, graph_id, title, created_at, updated_at
+            FROM conversations
+            WHERE graph_id IS NULL
+            ORDER BY updated_at DESC
+        """)
+        params: dict[str, Any] = {}
+    else:
+        query = text("""
+            SELECT id, graph_id, title, created_at, updated_at
+            FROM conversations
+            WHERE graph_id = :graph_id
+            ORDER BY updated_at DESC
+        """)
+        params = {"graph_id": graph_id}
 
-    result = await db.execute(query)
+    result = await db.execute(query, params)
     rows = result.fetchall()
 
     return [
         {
             "id": row[0],
-            "title": row[1],
-            "created_at": row[2],
-            "updated_at": row[3],
+            "graph_id": row[1],
+            "title": row[2],
+            "created_at": row[3],
+            "updated_at": row[4],
         }
         for row in rows
     ]
@@ -102,7 +129,7 @@ async def get_conversation_by_id(db: AsyncSession, conversation_id: UUID) -> dic
         dict | None: Conversation data or None if not found.
     """
     query = text("""
-        SELECT id, title, created_at, updated_at
+        SELECT id, graph_id, title, created_at, updated_at
         FROM conversations
         WHERE id = :id
     """)
@@ -115,9 +142,10 @@ async def get_conversation_by_id(db: AsyncSession, conversation_id: UUID) -> dic
 
     return {
         "id": row[0],
-        "title": row[1],
-        "created_at": row[2],
-        "updated_at": row[3],
+        "graph_id": row[1],
+        "title": row[2],
+        "created_at": row[3],
+        "updated_at": row[4],
     }
 
 
@@ -292,6 +320,49 @@ async def save_message(
     }
 
 
+async def ensure_conversation_graph_loaded(
+    db: AsyncSession,
+    conversation_id: UUID,
+) -> tuple[UUID | None, Path | None]:
+    """Resolve the graph attached to a conversation before querying."""
+    conversation = await get_conversation_by_id(db, conversation_id)
+    if not conversation:
+        raise QueryProcessingError("Conversation not found")
+
+    graph_id = conversation.get("graph_id")
+    if graph_id is None:
+        active_result = await db.execute(
+            text("""
+                SELECT id, workspace_path
+                FROM indexed_graphs
+                WHERE is_active = TRUE AND status = 'completed'
+                LIMIT 1
+            """)
+        )
+        active_row = active_result.fetchone()
+        if active_row is None:
+            raise QueryProcessingError("No completed graph is active for this conversation")
+        graph_id = active_row.id
+        workspace_path = active_row.workspace_path
+    else:
+        graph_result = await db.execute(
+            text("""
+                SELECT id, status, workspace_path
+                FROM indexed_graphs
+                WHERE id = :graph_id
+            """),
+            {"graph_id": graph_id},
+        )
+        graph_row = graph_result.fetchone()
+        if graph_row is None:
+            raise QueryProcessingError("Conversation graph not found")
+        if graph_row.status != "completed":
+            raise QueryProcessingError("Conversation graph is not ready for querying")
+        workspace_path = graph_row.workspace_path
+
+    return graph_id, Path(workspace_path)
+
+
 async def process_query(
     db: AsyncSession,
     conversation_id: UUID,
@@ -322,11 +393,14 @@ async def process_query(
     Raises:
         QueryProcessingError: If query processing fails.
     """
+    user_message_saved = False
     try:
         # 1. Save user message
         logger.info(f"Processing query for conversation {conversation_id}")
+        graph_id, workspace_path = await ensure_conversation_graph_loaded(db, conversation_id)
         await save_message(db, conversation_id, "user", question)
         await db.commit()
+        user_message_saved = True
 
         # 2. Retrieve conversation history (limit to last 3 messages for context)
         all_messages = await get_messages_by_conversation(db, conversation_id)
@@ -346,6 +420,8 @@ async def process_query(
             search_mode,
             query_chat_provider,
             query_embed_provider,
+            graph_id,
+            workspace_path,
         )
 
         answer = query_result.get("answer", "")
@@ -419,5 +495,38 @@ async def process_query(
         }
     except Exception as e:
         await db.rollback()
-        logger.error(f"Unexpected error during query processing: {e}")
-        raise QueryProcessingError(f"Failed to process query: {e}") from e
+        logger.exception("Unexpected error during query processing")
+        if not user_message_saved:
+            raise QueryProcessingError(f"Failed to process query: {e}") from e
+
+        search_mode_used, search_mode_reason = graphrag_service.route_search_mode(
+            question,
+            search_mode,
+        )
+        assistant_message = await save_message(
+            db,
+            conversation_id,
+            "assistant",
+            (
+                "A lekérdezés váratlan backend hibára futott, ezért nem sikerült GraphRAG "
+                "választ generálni. A kérdésedet elmentettem; próbáld újra Source vagy Local "
+                "módban. "
+                f"Technikai részlet: {e}"
+            ),
+            retrieved_entities=[],
+            retrieved_relationships=[],
+            retrieved_sources=[],
+            search_mode_used=search_mode_used,
+            search_mode_reason=search_mode_reason,
+        )
+        await db.commit()
+        return {
+            "message": assistant_message,
+            "retrieved_graph": {
+                "entities": [],
+                "relationships": [],
+                "sources": [],
+            },
+            "search_mode_used": search_mode_used,
+            "search_mode_reason": search_mode_reason,
+        }

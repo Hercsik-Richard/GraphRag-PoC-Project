@@ -77,6 +77,17 @@ def test_auto_router_selects_source_for_source_bound_extraction() -> None:
     assert "source-bound" in reason
 
 
+def test_auto_router_selects_source_for_direct_storage_fact_lookup() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+
+    mode, reason = service.route_search_mode(
+        "Which system stores extracted entities and relationships?"
+    )
+
+    assert mode == "source"
+    assert "direct source fact" in reason
+
+
 def test_auto_router_selects_hybrid_for_source_bound_analysis() -> None:
     service = GraphRAGService.__new__(GraphRAGService)
 
@@ -261,6 +272,29 @@ def test_source_evidence_ranking_prioritizes_query_terms() -> None:
 
     assert evidence[0].text_unit_id == "b"
     assert evidence[0].id == "S1"
+
+
+def test_direct_storage_fact_lookup_answers_without_model_call() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service._document_source_labels_cache = {}
+    service._load_text_unit_records = lambda: [  # type: ignore[method-assign]
+        {
+            "id": "tu-storage",
+            "text": (
+                "Orion Assistant uses AtlasGraph to organize entities found during indexing. "
+                "AtlasGraph stores extracted entities and relationships for the GraphRAG workspace."
+            ),
+        }
+    ]
+
+    result = service._execute_direct_source_fact_search(
+        "Which system stores extracted entities and relationships?"
+    )
+
+    assert result is not None
+    assert "AtlasGraph" in result["answer"]
+    assert result["retrieved_sources"]
+    assert result["retrieved_entities"][0]["title"] == "AtlasGraph"
 
 
 def test_source_label_does_not_expose_document_hashes() -> None:

@@ -38,6 +38,9 @@ export const API_ENDPOINTS = {
   INDEX: {
     UPLOAD: '/api/index/upload',
     CURRENT: '/api/index/current',
+    GRAPHS: '/api/index/graphs',
+    ACTIVE_GRAPH: '/api/index/graphs/active',
+    ACTIVATE_GRAPH: (id: string) => `/api/index/graphs/${id}/activate`,
     STATUS: '/api/index/status',
     PROGRESS: (id: string) => `/api/index/progress/${id}`,
   },
