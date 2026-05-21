@@ -191,3 +191,180 @@ Best narrative prose: baseline Gemini 3.1 Flash Lite.
 Best source-grounded answer: GraphRAG Gemini 3.1 Flash Lite Hybrid.
 
 Best fit for the thesis project: GraphRAG Gemini 3.1 Flash Lite Hybrid, because it better demonstrates the intended value of GraphRAG: structured retrieval, source traceability, reduced unsupported claims, and auditable multi-part synthesis.
+
+---
+
+# Fourth Test Rerun: Gemini 3.1 Flash Lite GraphRAG With Gemini Embedding 2
+
+## Rerun Context
+
+The fourth test was rerun after switching the Gemini embedding model from `gemini-embedding-001` / Gemini Embedding 1 behavior to `gemini-embedding-2`.
+
+The rerun used:
+
+- Indexing chat model: Gemini 3.1 Flash Lite
+- Indexing embedding model: `gemini-embedding-2`
+- Query chat model: Gemini 3.1 Flash Lite
+- Query embedding model: `gemini-embedding-2`
+- Retrieval mode: `auto`, routed to Hybrid-style source-plus-graph answering
+- Source document: indexed Albert Einstein Wikipedia article
+- Prompt: same source-restricted, multi-part Einstein analysis prompt
+
+The goal of this rerun was to check whether the newer embedding model improves retrieval quality, source grounding, and synthesis quality compared with the earlier fourth-test GraphRAG answer.
+
+## Result Summary
+
+The `gemini-embedding-2` rerun remains clearly source-grounded and auditable, but it is not an unambiguous improvement over the previous Gemini Embedding 1 run.
+
+The retrieved source chunks are mostly the same high-value chunks as before:
+
+- `[S1]` covers the biography overview, Switzerland, 1905, Berlin, Nobel Prize, and emigration.
+- `[S2]` covers the United States, Institute for Advanced Study, World War II, Szilard, and the Manhattan Project section.
+- `[S3]` covers Aarau, the 1896 graduation, and citizenship renunciation.
+- `[S5]` covers general relativity as curvature of spacetime.
+- `[S6]` covers the 1905 scientific papers.
+- `[S7]` covers 1919 fame and the 1921 U.S. visit.
+- `[S8]` covers pacifism and related political views.
+
+This means the retrieval layer is still finding the right article sections. The main differences appear in answer synthesis, not in raw source availability.
+
+## Strengths Of The Gemini Embedding 2 Rerun
+
+The answer is well structured and follows the requested sections:
+
+- chronological chain,
+- life-path narrative,
+- scientific analysis,
+- Nobel Prize clarification,
+- political change and emigration,
+- source evidence.
+
+The source discipline is strong. The answer consistently attaches `[S]` citations to most claims and avoids long unsupported expansions. This is still a major improvement over a direct baseline answer with no retrieval audit trail.
+
+The Nobel Prize clarification is excellent. It correctly states that Einstein did not receive the Nobel Prize for relativity and cites the photoelectric effect wording from `[S1]`.
+
+The general relativity subsection is stronger than the previous GraphRAG answer in one respect: it uses the retrieved source about spacetime curvature and connects it to 1919 public fame. This gives the reader both the conceptual point and the historical reception point.
+
+The Manhattan Project wording is cautious. The answer says the source supports Einstein and Szilard alerting Americans to Nazi atomic research, but does not assert detailed operational involvement in the Manhattan Project. This is safer than stronger causal claims such as saying Einstein directly launched or participated in the project.
+
+The source evidence section is relevant and directly tied to the answer. It avoids the previous baseline problem of listing peripheral facts as evidence.
+
+## Weaknesses And Regressions
+
+The biggest regression is in the 1905 annus mirabilis section.
+
+The rerun says the four major works were:
+
+- photoelectric effect,
+- Brownian motion,
+- special relativity containing `E=mc^2`,
+- PhD dissertation on molecular dimensions.
+
+This is not the best source-faithful formulation. The indexed source distinguishes the PhD dissertation from the four other famous 1905 works. The four annus mirabilis works should be stated as:
+
+- photoelectric effect,
+- Brownian motion,
+- special relativity,
+- mass-energy equivalence.
+
+The PhD dissertation is a relevant 1905 event, but it should not replace mass-energy equivalence as one of the four annus mirabilis achievements. This is a significant scientific-analysis error because the prompt explicitly asks for the four main achievements of 1905.
+
+The chronological chain is acceptable in count but weaker in date selection. It includes eight dates, but it omits:
+
+- `1879`, Einstein's birth in Ulm,
+- `1933`, the political turning point in Germany,
+- `1939`, the Roosevelt-letter context.
+
+Instead, it includes `1929` pacifism. That date is relevant thematically, but for this exact prompt, `1933` and `1939` are more central. The previous Embedding 1 GraphRAG answer also omitted `1933` from the timeline, but it at least included `1879`; the rerun loses the starting point of the life path.
+
+The Ulm-to-Munich part is still thin. The answer says "Ulm to Munich" in the heading, but it does not meaningfully explain Munich's role. It jumps quickly from the German Empire to Switzerland. This repeats one of the main weaknesses of the earlier GraphRAG answer.
+
+The quantum theory and statistical mechanics subsection is too compressed. It mentions that Einstein made significant contributions and later tried to refute accepted quantum interpretations, but it does not clearly explain the source-supported substance of his quantum/statistical work. The previous Embedding 1 answer was better here because it explicitly mentioned light quanta, the photoelectric effect, molecular physics, statistical descriptions, and Brownian motion.
+
+The political section is cautious but slightly under-complete. It refers to alerting Americans and Washington, but it could more explicitly name President Franklin D. Roosevelt because the prompt specifically asks about the letter to Roosevelt.
+
+## Comparison With The Previous Fourth-Test GraphRAG Answer
+
+| Criterion | Previous GraphRAG With Gemini Embedding 1 | Rerun With Gemini Embedding 2 | Winner |
+|---|---|---|---|
+| Source retrieval | Strong; retrieved the key Einstein chunks | Strong; retrieved mostly the same key chunks | Tie |
+| Source citations | Strong `[S]` citation discipline | Strong `[S]` citation discipline | Tie |
+| Chronological chain | Good, but omitted 1933 and 1939 | Good count, but omits 1879, 1933, and 1939 | Embedding 1 |
+| Life-path narrative | Source-controlled but Munich was thin | Similar, but Munich is even less developed | Embedding 1 |
+| 1905 annus mirabilis | Correctly listed the four main works including mass-energy equivalence | Incorrectly replaces mass-energy equivalence with the PhD dissertation | Embedding 1 |
+| General relativity | Accurate, compact | Slightly richer; includes spacetime curvature and 1919 fame | Embedding 2 |
+| Quantum/statistical mechanics | More specific | Too compressed | Embedding 1 |
+| Nobel Prize clarification | Strong and cited | Strong and cited | Tie |
+| 1933/emigration/Roosevelt/Manhattan Project | More explicit about Roosevelt, but slightly stronger wording | More cautious about limits, but less explicit about Roosevelt | Tie, with different strengths |
+| Big-picture synthesis | Compact but coherent | Compact, source-grounded, but less complete scientifically | Embedding 1 overall |
+
+## Which Fourth-Test GraphRAG Version Performed Better?
+
+The previous GraphRAG answer using Gemini Embedding 1 performed slightly better overall as an answer to this exact prompt.
+
+The reason is the scientific-analysis regression in the `gemini-embedding-2` rerun. The prompt explicitly asks for the four main 1905 achievements, and the rerun gives a weaker answer by replacing mass-energy equivalence with the PhD dissertation.
+
+That does not mean `gemini-embedding-2` is worse as an embedding model. The retrieved source chunks are still highly relevant, and the entity context appears somewhat cleaner in places. The problem is that the final answer synthesis did not use the retrieved 1905 source carefully enough.
+
+In short:
+
+- `gemini-embedding-2` did not damage source retrieval.
+- It did not clearly improve the final answer.
+- The final answer regressed on one critical scientific requirement.
+
+## Comparison Across All Four Tests
+
+| Test | Setup | Main Result | Main Limitation |
+|---|---|---|---|
+| First test | `qwen2.5:3b` baseline vs `qwen2.5:3b` GraphRAG | GraphRAG saw the requested structure better, but factual reliability was poor | Fabricated dates, weak citations, serious source-faithfulness problems |
+| Second test | `qwen2.5:3b` indexing, Gemini query, Local mode, split questions | Nobel Prize question worked; some focused retrieval worked | Local retrieval missed obvious source topics such as annus mirabilis and Roosevelt letter |
+| Third test | Gemini 3.1 Flash Lite baseline vs GraphRAG-indexed Gemini | GraphRAG became better overall for source-grounded answering | Some language/prompt issues and occasional over-strong political wording |
+| Fourth test, Embedding 1 | Full Gemini 3.1 Flash Lite with Gemini embedding, Hybrid mode | Best source-grounded answer so far; strong audit trail | Timeline omitted 1933, Munich was thin, causal depth was compact |
+| Fourth test rerun, Embedding 2 | Full Gemini 3.1 Flash Lite with `gemini-embedding-2`, Hybrid mode | Strong source grounding remains; general relativity and Manhattan caution improved | Critical regression in 1905 annus mirabilis; timeline and Munich still weak |
+
+## Cross-Test Trend
+
+The system improved most when the indexing and query model moved from small local models to Gemini and when Hybrid retrieval was used instead of relying only on Local graph retrieval.
+
+The biggest improvements across the four tests are:
+
+- fewer unsupported claims,
+- better source traceability,
+- more stable retrieval of the correct Einstein article sections,
+- better handling of Nobel Prize and emigration topics,
+- more cautious treatment of the Manhattan Project.
+
+The persistent weaknesses are:
+
+- the model still sometimes chooses a weaker timeline even when the source contains better dates,
+- Munich remains under-explained,
+- broad scientific sections can lose precision,
+- the final synthesis can still misclassify a source fact even when the right source chunk is retrieved.
+
+This is important for the thesis argument: GraphRAG improves traceability and grounding, but retrieval alone does not guarantee perfect synthesis. The generation prompt and evaluation constraints still need to force the model to use the retrieved evidence precisely.
+
+## Updated Verdict
+
+For the fourth test comparison, the previous Gemini Embedding 1 GraphRAG answer is slightly stronger than the new Gemini Embedding 2 rerun.
+
+For the overall project, the best configuration is still:
+
+- Gemini 3.1 Flash Lite for indexing,
+- Gemini 3.1 Flash Lite for query generation,
+- Gemini embeddings for index and query,
+- Hybrid retrieval mode,
+- strict source-evidence prompting.
+
+However, the current `gemini-embedding-2` rerun shows that the system needs a stronger answer-generation instruction for scientific enumerations. The prompt or post-processing should explicitly require:
+
+1. Do not count the PhD dissertation as one of the four annus mirabilis papers.
+2. List the four 1905 works as photoelectric effect, Brownian motion, special relativity, and mass-energy equivalence.
+3. Include `1879`, `1933`, and `1939` when the question asks for life turning points and political emigration.
+4. Explain Munich separately in the life-path narrative.
+5. Name Roosevelt explicitly when discussing the Roosevelt letter, while keeping Einstein's Manhattan Project role limited to what the source supports.
+
+## Final Updated Conclusion
+
+The new `gemini-embedding-2` run confirms that the pipeline is source-grounded and retrieves the right evidence, but it does not outperform the earlier fourth-test GraphRAG answer.
+
+The earlier Embedding 1 GraphRAG answer remains the better final answer because it handled the 1905 scientific section more accurately. The Embedding 2 rerun is still valuable: it shows that the retrieval layer is stable, but it also exposes that final answer quality depends heavily on prompt constraints and evidence-use discipline, not only on embedding model strength.

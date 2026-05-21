@@ -564,17 +564,18 @@ class GraphRAGService:
         self._invalidate_cached_index()
 
     def delete_current_index(self) -> None:
-        """Delete the currently loaded GraphRAG corpus and generated index files."""
-        for input_file in self.input_dir.glob("*.txt"):
-            input_file.unlink(missing_ok=True)
-
+        """Delete generated GraphRAG index files while preserving uploaded input documents."""
         for path in (self.output_dir, self.cache_dir):
             if path.exists():
                 shutil.rmtree(path)
             path.mkdir(parents=True, exist_ok=True)
 
         self._invalidate_cached_index()
-        logger.info("Deleted current GraphRAG index and cleared in-memory graph caches")
+        logger.info(
+            "Deleted current GraphRAG index and cleared in-memory graph caches; "
+            "preserved input documents in %s",
+            self.input_dir,
+        )
 
     def _set_graphrag_env_vars(
         self,
@@ -638,9 +639,12 @@ class GraphRAGService:
 
         logger.info(
             "GraphRAG environment configured for index chat=%s, embed=%s, "
-            "chat temperature=%s, chat RPM=%s, chat TPM=%s, embed batch RPM=%s, embed TPM=%s",
+            "chat model=%s, embed model=%s, chat temperature=%s, chat RPM=%s, "
+            "chat TPM=%s, embed batch RPM=%s, embed TPM=%s",
             chat_provider,
             embed_provider,
+            chat_config["model"],
+            embed_config["model"],
             chat_temperature,
             chat_rate_limits["requests_per_minute"],
             chat_rate_limits["tokens_per_minute"],
@@ -1295,9 +1299,11 @@ class GraphRAGService:
             )
             self.config = load_config(self.graphrag_root)
             logger.info(
-                "Indexing with chat provider %s and embedding provider %s",
+                "Indexing with chat provider %s (%s) and embedding provider %s (%s)",
                 active_index_chat_provider,
+                settings.get_model_name(active_index_chat_provider, "chat"),
                 active_index_embed_provider,
+                settings.get_model_name(active_index_embed_provider, "embedding"),
             )
             estimated_total_chunks = self._estimate_chunk_count(content)
             if (

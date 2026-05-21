@@ -222,7 +222,7 @@ APP_QUERY_CHAT_PROVIDER=gemini
 APP_QUERY_EMBED_PROVIDER=gemini
 APP_GEMINI_API_KEY=your-key
 APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
-APP_GEMINI_EMBED_MODEL=gemini-embedding-001
+APP_GEMINI_EMBED_MODEL=gemini-embedding-2
 APP_GEMINI_FREE_TIER_EMBED_GUARD_ENABLED=true
 APP_GEMINI_FREE_TIER_EMBED_RPM=100
 APP_GEMINI_FREE_TIER_EMBED_TPM=30000
@@ -262,11 +262,9 @@ A backend ezért az embedding workflow-ra külön guardot használ. A Gemini
 `batchEmbedContents` quota a batchben lévő elemeket is számolja, ezért a GraphRAG
 embedding batch hívások ütemezése szándékosan a publikus RPM limit alatt marad.
 
-Új Gemini embeddinges indexekhez a `gemini-embedding-2` erősebb választás lehet
-nagyobb bemeneti tokenkerettel és modernebb embedding viselkedéssel. A meglévő
-`gemini-embedding-001` indexekkel viszont nem kompatibilis, ezért váltáskor az
-index és query embedding modellt együtt kell átállítani, majd teljesen újra kell
-indexelni.
+A projekt Gemini embedding defaultja `gemini-embedding-2`. A meglévő
+`gemini-embedding-001` indexekkel nem kompatibilis, ezért váltáskor az index és
+query embedding modellt együtt kell átállítani, majd teljesen újra kell indexelni.
 
 OpenRouter chat Ollama embeddinggel:
 

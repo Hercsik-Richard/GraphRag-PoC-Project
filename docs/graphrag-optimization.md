@@ -37,7 +37,7 @@ APP_QUERY_CHAT_PROVIDER=gemini
 APP_QUERY_EMBED_PROVIDER=gemini
 APP_GEMINI_API_KEY=your-key
 APP_GEMINI_LLM_MODEL=gemini-3.1-flash-lite
-APP_GEMINI_EMBED_MODEL=gemini-embedding-001
+APP_GEMINI_EMBED_MODEL=gemini-embedding-2
 APP_GEMINI_FREE_TIER_EMBED_GUARD_ENABLED=true
 APP_GEMINI_FREE_TIER_EMBED_RPM=100
 APP_GEMINI_FREE_TIER_EMBED_TPM=30000
@@ -78,11 +78,10 @@ When Gemini is used for embeddings, the embedding model has a separate free-tier
 not just the outer batch request. The application therefore converts the public embedding
 RPM into a conservative batch RPM before indexing.
 
-For new Gemini embedding indexes, `gemini-embedding-2` is likely the stronger choice:
-it supports a larger input token limit, multimodal inputs, and automatic normalization
-for truncated dimensions. Do not mix it with an existing `gemini-embedding-001` index;
-the embedding spaces are incompatible, so switching requires setting both index and
-query embedding model to `gemini-embedding-2` and re-indexing all documents.
+The project uses `gemini-embedding-2` as the Gemini embedding default. Do not mix it
+with an existing `gemini-embedding-001` index; the embedding spaces are incompatible,
+so switching requires setting both index and query embedding model to
+`gemini-embedding-2` and re-indexing all documents.
 
 ### OpenRouter Chat With Ollama Embeddings
 

@@ -340,6 +340,7 @@ def test_verify_models_checks_only_active_query_roles() -> None:
 def test_gemini_free_tier_guard_defaults_are_conservative() -> None:
     settings = make_settings(query_chat_provider="gemini", gemini_api_key="test-key")
 
+    assert settings.gemini_embed_model == "gemini-embedding-2"
     assert settings.gemini_free_tier_guard_enabled is True
     assert settings.gemini_free_tier_query_rpm == 7
     assert settings.gemini_free_tier_query_tpm == 120_000
@@ -430,6 +431,30 @@ def test_gemini_index_embedding_request_estimate_is_conservative() -> None:
     service = GraphRAGService.__new__(GraphRAGService)
 
     assert service._estimate_gemini_index_embedding_requests(12) == 391
+
+
+def test_delete_current_index_preserves_input_documents(tmp_path: Path) -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    service.input_dir = tmp_path / "input"
+    service.output_dir = tmp_path / "output"
+    service.cache_dir = tmp_path / "cache"
+    service.input_dir.mkdir()
+    service.output_dir.mkdir()
+    service.cache_dir.mkdir()
+    input_file = service.input_dir / "source.txt"
+    output_file = service.output_dir / "entities.parquet"
+    cache_file = service.cache_dir / "cache.json"
+    input_file.write_text("source document", encoding="utf-8")
+    output_file.write_text("indexed output", encoding="utf-8")
+    cache_file.write_text("cached output", encoding="utf-8")
+
+    service.delete_current_index()
+
+    assert input_file.read_text(encoding="utf-8") == "source document"
+    assert service.output_dir.exists()
+    assert service.cache_dir.exists()
+    assert not output_file.exists()
+    assert not cache_file.exists()
 
 
 def test_openrouter_provider_requires_api_key() -> None:
