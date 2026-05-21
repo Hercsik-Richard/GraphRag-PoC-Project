@@ -1,0 +1,4 @@
+Ravi Patel maintains the ingestion pipeline that prepares text before indexing.
+The ingestion pipeline sends policy documents to EmbedLite for vector processing.
+EmbedLite creates embeddings for BetaBank Policy and other indexed policy documents used by Orion Assistant.
+AtlasGraph receives extracted entities and relationships after the pipeline finishes.

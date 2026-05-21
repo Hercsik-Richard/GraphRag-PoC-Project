@@ -70,7 +70,10 @@ Infrastruktúra:
 │   │       └── graphrag.py
 │   ├── scripts/
 │   │   ├── init_db.py
-│   │   └── init_graphrag.py
+│   │   ├── init_graphrag.py
+│   │   └── validate_controlled_sample.py
+│   ├── samples/
+│   │   └── controlled_tech_corpus/
 │   └── ragtest/
 │       ├── input/
 │       ├── output/
@@ -307,6 +310,24 @@ Részletes provider- és query-mode javaslatok: [docs/graphrag-optimization.md](
 
 A feltöltés csak `.txt` fájlokat fogad, legfeljebb 10 MB méretig. A GraphRAG indexelés hosszú ideig is futhat, különösen lokális modellekkel vagy nagy dokumentumokkal.
 
+## Kontrollált PoC minta
+
+A `backend/samples/controlled_tech_corpus/` mappa három rövid angol tech-domain `.txt` dokumentumot, egy `expected_graph.json` specifikációt és saját README-t tartalmaz. A minta célja, hogy a PoC gráfja kézzel ellenőrizhető legyen.
+
+Várt fő entitások: `Astra Labs`, `Orion Assistant`, `Maya Chen`, `AtlasGraph`, `Ravi Patel`, `Ingestion Pipeline`, `EmbedLite`, `BetaBank`, `BetaBank Policy`.
+
+Demo kérdések:
+
+- `Who builds Orion Assistant?`
+- `How are BetaBank, Orion Assistant, and BetaBank Policy connected?`
+- `Based on the indexed source, which policy document does Orion Assistant cite?`
+
+Már elkészült kontrollált index validálása:
+
+```bash
+docker compose exec backend uv run scripts/validate_controlled_sample.py
+```
+
 ## Keresési módok
 
 - `Auto`: egyszerű routing alapján választ módot.
@@ -314,6 +335,7 @@ A feltöltés csak `.txt` fájlokat fogad, legfeljebb 10 MB méretig. A GraphRAG
 - `Global`: teljes korpuszra vonatkozó összefoglalókhoz, témákhoz és mintázatokhoz jó.
 - `DRIFT`: több entitást, kapcsolatot, ok-okozatot vagy összehasonlítást érintő kérdésekhez jó.
 - `Source`: forráshű kivonatoláshoz jó, amikor csak a szövegben explicit szereplő kapcsolatokat szabad említeni.
+- `Hybrid`: forráshű analitikus szintézishez jó, amikor nyers szövegegység-forrásokra és gráfkontextusra is szükség van.
 
 A chat válasza eltárolja a ténylegesen használt módot és a routing indoklását is.
 
@@ -385,11 +407,10 @@ Ez törli a PostgreSQL és az Ollama Docker volume-okat. A hostról bind mountol
 
 ## Tesztek és ellenőrzés
 
-Backend tesztek:
+Backend tesztek elsődlegesen Docker/Linux környezetben:
 
 ```bash
-cd backend
-uv run pytest
+docker compose --profile test run --rm backend-test
 ```
 
 Frontend build:
@@ -405,6 +426,16 @@ Backend lint:
 cd backend
 uv run ruff check .
 ```
+
+Lokális backend tesztelés támogatott platformon:
+
+```bash
+cd backend
+uv run scripts/init_graphrag.py
+uv run pytest
+```
+
+macOS x86_64 környezetben a LanceDB wheel elérhetősége problémás lehet, ezért a Docker parancs az ajánlott ellenőrzési út.
 
 Frontend lint:
 

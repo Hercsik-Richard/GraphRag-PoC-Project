@@ -1,0 +1,4 @@
+BetaBank uses Orion Assistant for onboarding policy questions from new employees.
+Orion Assistant cites BetaBank Policy when it answers onboarding policy questions.
+Maya Chen asks Ravi Patel to verify the AtlasGraph relationship for BetaBank.
+Ravi Patel records that BetaBank, Orion Assistant, and AtlasGraph are linked in the controlled sample.

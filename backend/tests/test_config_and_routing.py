@@ -1,6 +1,8 @@
 """Tests for GraphRAG provider configuration and query routing."""
 
 import asyncio
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,24 @@ from app.services.graphrag import (
     GraphRAGService,
     SourceHit,
 )
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def find_project_root() -> Path:
+    """Find repo root in both local backend and Docker test layouts."""
+    candidates = [
+        Path(__file__).resolve().parents[2],
+        Path.cwd(),
+        Path.cwd().parent,
+    ]
+    for candidate in candidates:
+        if (candidate / "docker-compose.yml").exists():
+            return candidate
+    return Path(__file__).resolve().parents[2]
+
+
+PROJECT_ROOT = find_project_root()
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -470,3 +490,155 @@ def test_embedding_mismatch_is_detected() -> None:
     )
 
     assert settings.embedding_config_matches_index() is False
+
+
+def test_database_init_script_stays_in_sync_for_retrieved_sources() -> None:
+    files = [
+        BACKEND_ROOT / "app" / "database.py",
+        BACKEND_ROOT / "scripts" / "init_db.py",
+    ]
+
+    for path in files:
+        content = path.read_text(encoding="utf-8")
+        create_messages = re.search(
+            r'CREATE_MESSAGES_TABLE = """(?P<body>.*?)"""',
+            content,
+            flags=re.DOTALL,
+        )
+        alter_messages = re.search(
+            r'ALTER_MESSAGES_SEARCH_METADATA = """(?P<body>.*?)"""',
+            content,
+            flags=re.DOTALL,
+        )
+
+        assert create_messages is not None, f"{path} missing CREATE_MESSAGES_TABLE"
+        assert alter_messages is not None, f"{path} missing ALTER_MESSAGES_SEARCH_METADATA"
+        assert "retrieved_sources JSON" in create_messages.group("body")
+        assert "retrieved_sources JSON" in alter_messages.group("body")
+
+
+def _env_assignment_value(content: str, name: str) -> str:
+    match = re.search(rf"^{name}=(?P<value>.+)$", content, flags=re.MULTILINE)
+    assert match is not None, f"Missing {name}"
+    return match.group("value").strip()
+
+
+def _compose_fallback_value(content: str, name: str) -> str:
+    match = re.search(rf"{name}=\$\{{{name}:-(?P<value>[^}}]+)\}}", content)
+    assert match is not None, f"Missing compose fallback for {name}"
+    return match.group("value").strip()
+
+
+def test_graphrag_chunk_defaults_are_consistent_in_config_and_docs() -> None:
+    expected_size = "1000"
+    expected_overlap = "150"
+    root_env = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
+    backend_env = (BACKEND_ROOT / ".env.example").read_text(encoding="utf-8")
+    compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    docs = (PROJECT_ROOT / "docs" / "graphrag-optimization.md").read_text(encoding="utf-8")
+
+    assert _env_assignment_value(root_env, "APP_GRAPHRAG_CHUNK_SIZE") == expected_size
+    assert _env_assignment_value(root_env, "APP_GRAPHRAG_CHUNK_OVERLAP") == expected_overlap
+    assert _env_assignment_value(backend_env, "APP_GRAPHRAG_CHUNK_SIZE") == expected_size
+    assert _env_assignment_value(backend_env, "APP_GRAPHRAG_CHUNK_OVERLAP") == expected_overlap
+    assert _compose_fallback_value(compose, "APP_GRAPHRAG_CHUNK_SIZE") == expected_size
+    assert _compose_fallback_value(compose, "APP_GRAPHRAG_CHUNK_OVERLAP") == expected_overlap
+    assert "APP_GRAPHRAG_CHUNK_SIZE=1000" in readme
+    assert "APP_GRAPHRAG_CHUNK_OVERLAP=150" in readme
+
+    current_defaults = re.search(
+        r"## Current Index Defaults.*?```env(?P<body>.*?)```",
+        docs,
+        flags=re.DOTALL,
+    )
+    assert current_defaults is not None
+    assert "APP_GRAPHRAG_CHUNK_SIZE=1000" in current_defaults.group("body")
+    assert "APP_GRAPHRAG_CHUNK_OVERLAP=150" in current_defaults.group("body")
+
+
+def test_controlled_expected_graph_spec_is_well_formed() -> None:
+    spec_path = BACKEND_ROOT / "samples" / "controlled_tech_corpus" / "expected_graph.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+
+    assert spec["minimum_counts"]["documents"] >= 3
+    assert spec["minimum_counts"]["text_units"] >= 3
+    assert spec["minimum_counts"]["entities"] >= 8
+    assert spec["minimum_counts"]["relationships"] >= 5
+
+    entity_names = [entity["name"].casefold() for entity in spec["entities"]]
+    assert len(entity_names) == len(set(entity_names))
+    assert {"orion assistant", "atlasgraph", "betabank policy"}.issubset(entity_names)
+
+    relationships = spec["relationships"]
+    assert len(relationships) >= 5
+    expected_entities = set(entity_names)
+    for relationship in relationships:
+        assert relationship["source"].casefold() in expected_entities
+        assert relationship["target"].casefold() in expected_entities
+        assert int(relationship.get("max_path_length", 1)) >= 1
+
+
+def test_graph_transform_adds_edges_and_component_metadata_from_records() -> None:
+    service = GraphRAGService.__new__(GraphRAGService)
+    entities = [
+        {
+            "title": "Orion Assistant",
+            "type": "technology",
+            "description": "Policy assistant.",
+            "x": 0.0,
+            "y": 0.0,
+        },
+        {
+            "title": "Maya Chen",
+            "type": "person",
+            "description": "Lead architect of Orion Assistant.",
+        },
+        {
+            "title": "AtlasGraph",
+            "type": "technology",
+            "description": "Stores extracted relationships.",
+        },
+        {
+            "title": "EmbedLite",
+            "type": "technology",
+            "description": "Creates embeddings.",
+        },
+    ]
+    relationships = [
+        {
+            "source": "Maya Chen",
+            "target": "Orion Assistant",
+            "description": "lead architect of",
+            "weight": 1.5,
+        },
+        {
+            "source": "Orion Assistant",
+            "target": "AtlasGraph",
+            "description": "uses",
+            "weight": 2,
+        },
+        {
+            "source": "Ravi Patel",
+            "target": "Ingestion Pipeline",
+            "description": "maintains",
+            "weight": 1,
+        },
+    ]
+
+    nodes, duplicate_count = service._transform_entities_to_nodes(entities)
+    edges, graph_nodes, cleanup_stats = service._transform_relationships_to_edges(
+        relationships,
+        nodes,
+    )
+    metadata = service._annotate_graph_components(graph_nodes, edges)
+    node_by_label = {node["data"]["label"]: node for node in graph_nodes}
+
+    assert duplicate_count == 0
+    assert len(edges) == 3
+    assert cleanup_stats["relationship_only_node_count"] == 2
+    assert node_by_label["Ravi Patel"]["data"]["generated_from_relationship"] is True
+    assert node_by_label["EmbedLite"]["data"]["degree"] == 0
+    assert node_by_label["EmbedLite"]["data"]["is_isolated"] is True
+    assert metadata["isolated_node_count"] == 1
+    assert metadata["largest_component_node_count"] == 3

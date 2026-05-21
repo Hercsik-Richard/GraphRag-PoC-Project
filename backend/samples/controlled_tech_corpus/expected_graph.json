@@ -1,0 +1,104 @@
+{
+  "name": "controlled_tech_corpus",
+  "description": "Small English technology-domain corpus for validating the GraphRAG PoC.",
+  "minimum_counts": {
+    "documents": 3,
+    "text_units": 3,
+    "entities": 8,
+    "relationships": 6
+  },
+  "entities": [
+    {
+      "name": "Astra Labs",
+      "type": "organization"
+    },
+    {
+      "name": "Orion Assistant",
+      "type": "technology"
+    },
+    {
+      "name": "Maya Chen",
+      "type": "person"
+    },
+    {
+      "name": "AtlasGraph",
+      "type": "technology"
+    },
+    {
+      "name": "Ravi Patel",
+      "type": "person"
+    },
+    {
+      "name": "Ingestion Pipeline",
+      "type": "technology"
+    },
+    {
+      "name": "EmbedLite",
+      "type": "technology"
+    },
+    {
+      "name": "BetaBank",
+      "type": "organization"
+    },
+    {
+      "name": "BetaBank Policy",
+      "type": "artifact"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "Astra Labs",
+      "target": "Orion Assistant",
+      "description": "Astra Labs builds Orion Assistant.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Maya Chen",
+      "target": "Orion Assistant",
+      "description": "Maya Chen is lead architect of Orion Assistant.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Orion Assistant",
+      "target": "AtlasGraph",
+      "description": "Orion Assistant uses AtlasGraph.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Ravi Patel",
+      "target": "Ingestion Pipeline",
+      "description": "Ravi Patel maintains the ingestion pipeline.",
+      "max_path_length": 1
+    },
+    {
+      "source": "EmbedLite",
+      "target": "BetaBank Policy",
+      "description": "EmbedLite creates embeddings for BetaBank Policy and indexed policy documents.",
+      "max_path_length": 1
+    },
+    {
+      "source": "AtlasGraph",
+      "target": "Orion Assistant",
+      "description": "AtlasGraph stores extracted entities and relationships used by Orion Assistant.",
+      "max_path_length": 1
+    },
+    {
+      "source": "BetaBank",
+      "target": "Orion Assistant",
+      "description": "BetaBank uses Orion Assistant for onboarding policy questions.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Orion Assistant",
+      "target": "BetaBank Policy",
+      "description": "Orion Assistant cites BetaBank Policy.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Maya Chen",
+      "target": "Ravi Patel",
+      "description": "Maya Chen asks Ravi Patel to verify the AtlasGraph relationship for BetaBank.",
+      "max_path_length": 2
+    }
+  ]
+}
