@@ -1,0 +1,162 @@
+{
+  "name": "graphrag_poc",
+  "description": "Course-documentation GraphRAG PoC corpus for validating ingestion, chunking, retrieval, graph construction, citations, and evaluation.",
+  "minimum_counts": {
+    "documents": 3,
+    "text_units": 3,
+    "entities": 15,
+    "relationships": 12
+  },
+  "entities": [
+    {
+      "name": "GraphRAG PoC",
+      "type": "system"
+    },
+    {
+      "name": "Document Loader",
+      "type": "component"
+    },
+    {
+      "name": "Chunking Module",
+      "type": "component"
+    },
+    {
+      "name": "Indexing Pipeline",
+      "type": "component"
+    },
+    {
+      "name": "Embedding Model",
+      "type": "component"
+    },
+    {
+      "name": "Vector Store",
+      "type": "component"
+    },
+    {
+      "name": "Entity Extractor",
+      "type": "component"
+    },
+    {
+      "name": "Relationship Extractor",
+      "type": "component"
+    },
+    {
+      "name": "Graph Store",
+      "type": "component"
+    },
+    {
+      "name": "Query Engine",
+      "type": "component"
+    },
+    {
+      "name": "Answer Generator",
+      "type": "component"
+    },
+    {
+      "name": "Evaluation Script",
+      "type": "component"
+    },
+    {
+      "name": "graph traversal",
+      "type": "retrieval_strategy"
+    },
+    {
+      "name": "text chunks",
+      "type": "data_artifact"
+    },
+    {
+      "name": "provenance metadata",
+      "type": "concept"
+    },
+    {
+      "name": "vector retrieval",
+      "type": "retrieval_strategy"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "GraphRAG PoC",
+      "target": "vector retrieval",
+      "description": "GraphRAG PoC uses vector retrieval as part of hybrid retrieval.",
+      "max_path_length": 1
+    },
+    {
+      "source": "GraphRAG PoC",
+      "target": "graph traversal",
+      "description": "GraphRAG PoC uses graph traversal as part of hybrid retrieval.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Document Loader",
+      "target": "Chunking Module",
+      "description": "Document Loader sends text to Chunking Module.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Chunking Module",
+      "target": "text chunks",
+      "description": "Chunking Module creates text chunks.",
+      "max_path_length": 3
+    },
+    {
+      "source": "Embedding Model",
+      "target": "text chunks",
+      "description": "Embedding Model converts text chunks.",
+      "max_path_length": 2
+    },
+    {
+      "source": "Vector Store",
+      "target": "Embedding Model",
+      "description": "Vector Store indexes embeddings.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Entity Extractor",
+      "target": "Graph Store",
+      "description": "Entity Extractor identifies information saved into Graph Store.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Relationship Extractor",
+      "target": "Graph Store",
+      "description": "Relationship Extractor creates graph edges saved in Graph Store.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Graph Store",
+      "target": "Evaluation Script",
+      "description": "Graph Store saves entities and relationships.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Graph Store",
+      "target": "provenance metadata",
+      "description": "Graph Store stores provenance metadata.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Query Engine",
+      "target": "Vector Store",
+      "description": "Query Engine uses Vector Store for vector retrieval.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Query Engine",
+      "target": "Graph Store",
+      "description": "Query Engine uses Graph Store for graph traversal.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Answer Generator",
+      "target": "Query Engine",
+      "description": "Answer Generator receives query context from Query Engine.",
+      "max_path_length": 1
+    },
+    {
+      "source": "Evaluation Script",
+      "target": "Graph Store",
+      "description": "Evaluation Script compares extracted graph with expected reference graph.",
+      "max_path_length": 1
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+The Query Engine receives a user question and selects the most appropriate retrieval strategy.
+
+For local factual questions, the Query Engine uses Vector Retrieval to find relevant source chunks. For relationship-heavy questions, the Query Engine also uses Graph Traversal over the Graph Store.
+
+The Answer Generator receives Source Excerpts And Graph Context. The Answer Generator must cite Source Chunks used for the answer.
+
+The Evaluation Script compares the Extracted Graph With Expected Reference Graph. It checks whether the minimum number of entities and relationships was reached.
+
+The Evaluation Script also checks whether important relationships were extracted, such as the connection between the Entity Extractor and the Graph Store, or the connection between source metadata and answer traceability.

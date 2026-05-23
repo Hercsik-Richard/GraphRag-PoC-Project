@@ -696,6 +696,35 @@ def test_controlled_expected_graph_spec_is_well_formed() -> None:
         assert int(relationship.get("max_path_length", 1)) >= 1
 
 
+def test_graphrag_poc_expected_graph_spec_is_well_formed() -> None:
+    spec_path = BACKEND_ROOT / "samples" / "graphrag_poc" / "expected_graph.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+
+    assert spec["minimum_counts"]["documents"] >= 3
+    assert spec["minimum_counts"]["text_units"] >= 3
+    assert spec["minimum_counts"]["entities"] >= 15
+    assert spec["minimum_counts"]["relationships"] >= 12
+
+    entity_names = [entity["name"].casefold() for entity in spec["entities"]]
+    assert len(entity_names) == len(set(entity_names))
+    assert {
+        "graphrag poc",
+        "document loader",
+        "chunking module",
+        "graph store",
+        "text chunks",
+        "vector retrieval",
+    }.issubset(entity_names)
+
+    relationships = spec["relationships"]
+    assert len(relationships) >= 12
+    expected_entities = set(entity_names)
+    for relationship in relationships:
+        assert relationship["source"].casefold() in expected_entities
+        assert relationship["target"].casefold() in expected_entities
+        assert int(relationship.get("max_path_length", 1)) >= 1
+
+
 def test_graph_transform_adds_edges_and_component_metadata_from_records() -> None:
     service = GraphRAGService.__new__(GraphRAGService)
     entities = [

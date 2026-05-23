@@ -1,0 +1,35 @@
+Source: 01_project_overview.txt
+
+The GraphRAG PoC is a student software prototype for source-grounded question answering over course documentation.
+
+The system ingests Markdown and PDF documents from a small controlled corpus. During indexing, the Document Loader extracts raw text and sends text to the Chunking Module.
+
+The Chunking Module splits long documents into smaller text units. The Chunking Module creates text chunks, and each text unit keeps source metadata so that generated answers can be traced back to the original document.
+
+The GraphRAG PoC uses hybrid retrieval. Hybrid retrieval combines Vector Retrieval, which finds semantically similar Text Chunks, with Graph Traversal, which expands context through extracted entities and relationships.
+
+The main goal of the GraphRAG PoC is not to replace classical RAG, but to show when explicit entity-relation structure can make answers easier to inspect and validate.
+
+Source: 02_indexing_pipeline.txt
+
+The Indexing Pipeline is implemented as a Python service.
+
+The Document Loader reads the input files and forwards cleaned text to the Chunking Module. The Chunking Module stores source metadata for every Text Chunk.
+
+The Embedding Model converts Text Chunks into Embeddings. The Vector Store indexes Embeddings for semantic search.
+
+The Entity Extractor identifies Software Components, documents, and evaluation concepts in the text. The Relationship Extractor creates Graph Edges between related entities.
+
+The Graph Store saves Entities And Relationships. The Graph Store also stores Provenance Metadata. Each graph edge stores the source document where the relationship was found.
+
+Source: 03_query_and_evaluation.txt
+
+The Query Engine receives a user question and selects the most appropriate retrieval strategy.
+
+For local factual questions, the Query Engine uses Vector Retrieval to find relevant source chunks. For relationship-heavy questions, the Query Engine also uses Graph Traversal over the Graph Store.
+
+The Answer Generator receives Source Excerpts And Graph Context. The Answer Generator must cite Source Chunks used for the answer.
+
+The Evaluation Script compares the Extracted Graph With Expected Reference Graph. It checks whether the minimum number of entities and relationships was reached.
+
+The Evaluation Script also checks whether important relationships were extracted, such as the connection between the Entity Extractor and the Graph Store, or the connection between source metadata and answer traceability.

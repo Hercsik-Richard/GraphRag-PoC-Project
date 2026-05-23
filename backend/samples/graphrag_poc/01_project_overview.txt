@@ -1,0 +1,9 @@
+The GraphRAG PoC is a student software prototype for source-grounded question answering over course documentation.
+
+The system ingests Markdown and PDF documents from a small controlled corpus. During indexing, the Document Loader extracts raw text and sends text to the Chunking Module.
+
+The Chunking Module splits long documents into smaller text units. The Chunking Module creates text chunks, and each text unit keeps source metadata so that generated answers can be traced back to the original document.
+
+The GraphRAG PoC uses hybrid retrieval. Hybrid retrieval combines Vector Retrieval, which finds semantically similar Text Chunks, with Graph Traversal, which expands context through extracted entities and relationships.
+
+The main goal of the GraphRAG PoC is not to replace classical RAG, but to show when explicit entity-relation structure can make answers easier to inspect and validate.

@@ -112,6 +112,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/scripts:/app/scripts
+      - ./backend/samples:/app/samples:ro
       - ./backend/ragtest:/app/ragtest
       - ./backend/logs:/app/logs
       - ./frontend/dist:/frontend/dist:ro

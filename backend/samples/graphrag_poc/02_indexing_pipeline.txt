@@ -1,0 +1,9 @@
+The Indexing Pipeline is implemented as a Python service.
+
+The Document Loader reads the input files and forwards cleaned text to the Chunking Module. The Chunking Module stores source metadata for every Text Chunk.
+
+The Embedding Model converts Text Chunks into Embeddings. The Vector Store indexes Embeddings for semantic search.
+
+The Entity Extractor identifies Software Components, documents, and evaluation concepts in the text. The Relationship Extractor creates Graph Edges between related entities.
+
+The Graph Store saves Entities And Relationships. The Graph Store also stores Provenance Metadata. Each graph edge stores the source document where the relationship was found.

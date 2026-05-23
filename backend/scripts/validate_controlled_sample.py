@@ -349,9 +349,9 @@ def service_diagnostics(graphrag_root: Path) -> dict[str, Any]:
     return diagnostics if isinstance(diagnostics, dict) else {}
 
 
-def print_result(result: ValidationResult) -> None:
+def print_result(result: ValidationResult, title: str = "Controlled sample validation") -> None:
     """Print a compact validation report."""
-    print("Controlled sample validation")
+    print(title)
     print(f"Counts: {json.dumps(result.counts, sort_keys=True)}")
     print(f"Matched relationships: {len(result.matched_relationships)}")
 
