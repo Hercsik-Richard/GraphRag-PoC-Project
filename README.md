@@ -1,9 +1,15 @@
 # GraphRAG Knowledge Graph Assistant
 
-## Language / Nyelv
+## Navigation / Navigáció
 
-- [English](#english)
-- [Magyar](#magyar)
+**Language / Nyelv:** [English](#english) | [Magyar](#magyar)
+
+**Test Reports / Teszt Riportok:**
+[First Test](docs/First-Test-Results.md) |
+[Second Test](docs/second-test-local-results.md) |
+[Third Test](docs/Third-Test-Results.md) |
+[Fourth Test](docs/Fourth-Test-Results.md) |
+[GraphRAG PoC Sample Test](docs/GraphRAG-PoC-Sample-Test-Report.md)
 
 ---
 
