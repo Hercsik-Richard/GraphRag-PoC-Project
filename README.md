@@ -15,8 +15,6 @@ This repository is a full-stack proof-of-concept GraphRAG application for source
 
 The research motivation is explainability and hallucination reduction. Instead of relying only on vector similarity over isolated chunks, the application exposes structured context: source text units, entities, relationships, communities, citations, and query-routing metadata.
 
-Source and inspiration project: <https://github.com/dev-it-with-me/MythologyGraphRag>
-
 This project is topic-independent. It can be used as a document-based knowledge graph assistant for any UTF-8 `.txt` source text.
 
 ## Key Features
@@ -682,8 +680,6 @@ If indexing is slow or times out, reduce `APP_GRAPHRAG_CHUNK_SIZE`, increase `AP
 Ez a repository egy teljes stackes, proof-of-concept GraphRAG alkalmazás forrásalapú kérdés-válaszhoz feltöltött `.txt` dokumentumok felett. A rendszer Microsoft GraphRAG-gel indexeli a forrásszöveget, entitásokból és kapcsolatokból tudásgráfot épít, vizualizálja a gráfot, majd több keresési móddal válaszol a felhasználói kérdésekre.
 
 A kutatási motiváció az átláthatóság és a hallucinációk csökkentése. A rendszer nem csak izolált szövegrészek vektoros hasonlóságára támaszkodik, hanem strukturált kontextust is megmutat: szövegegységeket, entitásokat, kapcsolatokat, közösségeket, forrásidézeteket és lekérdezési routing metaadatokat.
-
-Forrás és inspirációs projekt: <https://github.com/dev-it-with-me/MythologyGraphRag>
 
 A projekt nem kötődik egyetlen témához. Bármilyen UTF-8 kódolású `.txt` forrásszöveggel használható dokumentum-alapú tudásgráf asszisztensként.
 
