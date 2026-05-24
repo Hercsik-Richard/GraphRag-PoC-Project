@@ -1,4 +1,0 @@
-Astra Labs builds Orion Assistant, a support tool for enterprise policy teams.
-Maya Chen is the lead architect of Orion Assistant and reviews its graph features.
-Orion Assistant uses AtlasGraph to organize entities found during indexing.
-AtlasGraph stores extracted entities and relationships for the GraphRAG workspace.
