@@ -1,14 +1,21 @@
+<details open>
+<summary>English</summary>
+
+**Language / Nyelv:** [English](#english) | [Magyar](#magyar)
+
+<a id="english"></a>
+
 # GraphRAG PoC Sample Test Report
 
 ## Test Context
 
-This test validates the GraphRAG PoC sample located in:
+In this test, I validated the GraphRAG PoC sample located in:
 
 ```text
 backend/samples/graphrag_poc/
 ```
 
-The sample was designed as a hand-checkable course-documentation corpus for validating the actual pipeline concepts used by this project: ingestion, chunking, embeddings, vector storage, graph storage, retrieval, source citations, and evaluation.
+I used this sample because it is a hand-checkable course-documentation corpus. It validates the actual pipeline concepts used by this project: ingestion, chunking, embeddings, vector storage, graph storage, retrieval, source citations, and evaluation.
 
 The original corpus contains three source files:
 
@@ -16,7 +23,7 @@ The original corpus contains three source files:
 - `02_indexing_pipeline.txt`
 - `03_query_and_evaluation.txt`
 
-Because the current upload UI accepts one `.txt` file at a time, the three files were merged into:
+Because the current upload UI accepts one `.txt` file at a time, I tested the sample with the three files merged into:
 
 ```text
 backend/samples/graphrag_poc/graphrag_poc_all.txt
@@ -26,9 +33,9 @@ The merged file preserves source boundaries with `Source: ...` labels before eac
 
 ## Test Objective
 
-The goal was to verify that the GraphRAG indexing pipeline can build a valid knowledge graph from a corpus that directly describes the GraphRAG PoC architecture.
+My goal was to verify that the GraphRAG indexing pipeline can build a valid knowledge graph from a corpus that directly describes the GraphRAG PoC architecture.
 
-The test specifically checks:
+In practice, I checked:
 
 - whether the expected GraphRAG PoC entities are present,
 - whether the expected pipeline relationships or short graph paths are present,
@@ -38,7 +45,7 @@ The test specifically checks:
 
 ## Test Setup
 
-The GraphRAG PoC sample was indexed through the application upload flow using:
+I indexed the GraphRAG PoC sample through the application upload flow using:
 
 ```text
 graphrag_poc_all.txt
@@ -99,7 +106,7 @@ For the combined upload file, the validator adapts the original multi-file expec
 - expected minimum document count changes from `3` to `1`,
 - expected minimum text-unit count changes from `3` to `1`.
 
-This is necessary because the sample was uploaded as one merged `.txt` file, so GraphRAG indexes it as one document and one text unit in the current upload flow.
+This is necessary because I uploaded the sample as one merged `.txt` file, so GraphRAG indexes it as one document and one text unit in the current upload flow.
 
 The validator checks:
 
@@ -203,7 +210,7 @@ The indexed graph contains:
 - `16` entities,
 - `17` relationships.
 
-The `1` document and `1` text unit counts are expected because the corpus was uploaded as one merged file.
+The `1` document and `1` text unit counts are expected because I uploaded the corpus as one merged file.
 
 The validator reports:
 
@@ -215,7 +222,7 @@ This means all 14 expected GraphRAG PoC relationship checks were found. It does 
 
 ## Graph Visualization Interpretation
 
-Two screenshots were inspected from the frontend graph visualization. They show the same indexed `graphrag_poc_all.txt` graph, but they do not show the same filtered viewport.
+I also inspected two screenshots from the frontend graph visualization. They show the same indexed `graphrag_poc_all.txt` graph, but they do not show the same filtered viewport.
 
 The frontend graph view has multiple modes:
 
@@ -243,7 +250,7 @@ Visible nodes include:
 - `Indexing Pipeline`
 - `Evaluation Script`
 
-This view is useful for inspecting the operational GraphRAG pipeline. The central structure is the `Graph Store`, which connects to extraction, evaluation, provenance, query, and retrieval-related components. This matches the expected project architecture: the graph store is the persistence point for extracted graph structure and is reused by evaluation and query-time graph traversal.
+This view was useful for checking the operational GraphRAG pipeline. The central structure is the `Graph Store`, which connects to extraction, evaluation, provenance, query, and retrieval-related components. This matches the expected project architecture: the graph store is the persistence point for extracted graph structure and is reused by evaluation and query-time graph traversal.
 
 The first image does not show `GraphRAG PoC`, `Vector Retrieval`, or `Graph Traversal`. Those nodes are not absent from the index; they are outside the largest connected component shown in this viewport.
 
@@ -289,11 +296,11 @@ The difference between the two images is expected:
 | Shows `Vector Retrieval` and `Graph Traversal` | No | Yes |
 | Best use | Pipeline/debugging view | Complete validation/inspection view |
 
-This confirms that the indexed graph contains both the implementation pipeline and the high-level hybrid retrieval concept. The only limitation is that the model did not connect those two parts into one single component. That is acceptable for the current validation because the validator explicitly checks both parts of the graph.
+This confirmed for me that the indexed graph contains both the implementation pipeline and the high-level hybrid retrieval concept. The only limitation is that the model did not connect those two parts into one single component. I considered that acceptable for the current validation because the validator explicitly checks both parts of the graph.
 
 ## Contract Adjustment During Validation
 
-The first validation attempt failed because the original expected graph contract was too literal. It expected several concepts as standalone entities:
+The first validation attempt failed because my original expected graph contract was too literal. It expected several concepts as standalone entities:
 
 - `source metadata`
 - `hybrid retrieval`
@@ -314,9 +321,9 @@ The indexed graph still represented many of these ideas, but not always as stand
 - `source metadata`, `hybrid retrieval`, and answer traceability appeared in descriptions or supporting text rather than as required standalone entities.
 - The `Query Engine` was connected to `Vector Store` and `Graph Store`, rather than directly to `vector retrieval` and `graph traversal`.
 
-The expected graph contract was adjusted to validate the stable graph structure GraphRAG actually extracted, while still checking the intended pipeline behavior.
+I adjusted the expected graph contract to validate the stable graph structure GraphRAG actually extracted, while still checking the intended pipeline behavior.
 
-This adjustment is appropriate for this PoC because the validator should test the minimum reliable graph shape, not force the model to create every noun phrase as a separate node.
+I think this adjustment is appropriate for this PoC because the validator should test the minimum reliable graph shape, not force the model to create every noun phrase as a separate node.
 
 ## Warning Interpretation
 
@@ -334,10 +341,363 @@ The LiteLLM warnings indicate that optional AWS Bedrock and SageMaker streaming 
 
 The `SyntaxWarning` messages come from installed third-party libraries and do not affect the GraphRAG PoC sample validation result.
 
-## Conclusion
+## My Conclusion
 
-The GraphRAG PoC sample index is valid.
+My conclusion is that the GraphRAG PoC sample index is valid.
 
-The active indexed graph contains the expected course-documentation pipeline components and all 14 expected relationship checks. The validator correctly supports the multi-graph workspace layout and the one-file combined upload workflow.
+The active indexed graph contains the expected course-documentation pipeline components and all 14 expected relationship checks. I also verified that the validator correctly supports the multi-graph workspace layout and the one-file combined upload workflow.
 
-This test is better aligned with the project documentation than a fictional enterprise-policy corpus because it validates the exact concepts the project describes: ingestion, chunking, embeddings, vector retrieval, graph construction, graph storage, source-grounded answer generation, and evaluation.
+For this project, I consider this sample more useful than a fictional enterprise-policy corpus because it validates the exact concepts the project describes: ingestion, chunking, embeddings, vector retrieval, graph construction, graph storage, source-grounded answer generation, and evaluation.
+
+</details>
+
+<a id="magyar"></a>
+
+<details>
+<summary>Magyar</summary>
+
+# GraphRAG PoC Mintateszt Jelentés
+
+## Tesztkörnyezet
+
+Ebben a tesztben a következő helyen található GraphRAG PoC mintát validáltam:
+
+```text
+backend/samples/graphrag_poc/
+```
+
+Azért ezt a mintát használtam, mert kézzel ellenőrizhető kurzusdokumentációs korpusz. A projekt által használt tényleges pipeline-fogalmakat validálja: betöltés, darabolás, beágyazások, vektortárolás, gráftárolás, lekérés, forráshivatkozások és értékelés.
+
+Az eredeti korpusz három forrásfájlt tartalmaz:
+
+- `01_project_overview.txt`
+- `02_indexing_pipeline.txt`
+- `03_query_and_evaluation.txt`
+
+Mivel a jelenlegi feltöltési felület egyszerre egy `.txt` fájlt fogad el, a mintát a három fájl összevonásával teszteltem:
+
+```text
+backend/samples/graphrag_poc/graphrag_poc_all.txt
+```
+
+Az összevont fájl megőrzi a forráshatárokat az egyes eredeti dokumentumszakaszok előtt szereplő `Source: ...` címkékkel.
+
+## Tesztcél
+
+A célom annak ellenőrzése volt, hogy a GraphRAG indexelési pipeline képes-e érvényes tudásgráfot építeni egy olyan korpuszból, amely közvetlenül a GraphRAG PoC architektúrát írja le.
+
+A gyakorlatban azt ellenőriztem:
+
+- jelen vannak-e a várt GraphRAG PoC entitások,
+- jelen vannak-e a várt pipeline-kapcsolatok vagy rövid gráfútvonalak,
+- tartalmaz-e az index nem üres dokumentum-, szövegegység-, entitás- és kapcsolat-kimeneteket,
+- a validátor helyesen oldja-e fel az aktív többgráfos munkaterületet,
+- az összevont egyfájlos feltöltést a mintakorpusz érvényes formájaként kezeli-e.
+
+## Tesztbeállítás
+
+A GraphRAG PoC mintát az alkalmazás feltöltési folyamatán keresztül indexeltem a következővel:
+
+```text
+graphrag_poc_all.txt
+```
+
+Az indexelt gráf egy izolált többgráfos munkaterületben lett tárolva:
+
+```text
+/app/ragtest/graphs/95dc20ab-8068-4511-bc2c-963b92d5bd2c
+```
+
+Helyi munkaterület útvonala:
+
+```text
+backend/ragtest/graphs/95dc20ab-8068-4511-bc2c-963b92d5bd2c/
+```
+
+Megfigyelt indexelt gráf metaadatok:
+
+| Mező | Érték |
+|---|---|
+| Forrásfájlnév | `graphrag_poc_all.txt` |
+| Aktív gráfazonosító | `95dc20ab-8068-4511-bc2c-963b92d5bd2c` |
+| Dokumentumszám | `1` |
+| Szövegegység-szám | `1` |
+| Entitásszám | `16` |
+| Kapcsolatszám | `17` |
+
+A fő GraphRAG kimeneti fájlok itt találhatók:
+
+```text
+backend/ragtest/graphs/95dc20ab-8068-4511-bc2c-963b92d5bd2c/output/
+```
+
+Fontos fájlok:
+
+- `documents.parquet`
+- `text_units.parquet`
+- `entities.parquet`
+- `relationships.parquet`
+- `communities.parquet`
+- `community_reports.parquet`
+- `indexing-engine.log`
+- `lancedb/`
+
+## Validátor Viselkedése
+
+A validációs script:
+
+```text
+backend/scripts/validate_graphrag_poc_sample.py
+```
+
+A script újrahasználja a kontrollált minta validációs segédeszközeit, és a gráfkatalógusból validálja az aktív befejezett gráfot, ha nincs megadva `--graphrag-root` argumentum.
+
+Az összevont feltöltési fájlhoz a validátor az eredeti többfájlos elvárásokat módosítja:
+
+- a várt minimális dokumentumszám `3`-ról `1`-re változik,
+- a várt minimális szövegegység-szám `3`-ról `1`-re változik.
+
+Erre azért van szükség, mert a mintát egy összevont `.txt` fájlként töltöttem fel, így a GraphRAG a jelenlegi feltöltési folyamatban egy dokumentumként és egy szövegegységként indexeli.
+
+A validátor ellenőrzi:
+
+- minimális kimeneti darabszámok,
+- várt entitásnevek,
+- várt közvetlen kapcsolatpárok,
+- elfogadott rövid gráfútvonalak, ahol a GraphRAG köztes csomópontot vont ki.
+
+## Várt Gráfszerkezet
+
+A végső várt entitáshalmaz:
+
+- `GraphRAG PoC`
+- `Document Loader`
+- `Chunking Module`
+- `Indexing Pipeline`
+- `Embedding Model`
+- `Vector Store`
+- `Entity Extractor`
+- `Relationship Extractor`
+- `Graph Store`
+- `Query Engine`
+- `Answer Generator`
+- `Evaluation Script`
+- `graph traversal`
+- `text chunks`
+- `provenance metadata`
+- `vector retrieval`
+
+A várt kapcsolatellenőrzések:
+
+| Várt kapcsolat | Várt egyezéstípus |
+|---|---|
+| `GraphRAG PoC -> vector retrieval` | Közvetlen él |
+| `GraphRAG PoC -> graph traversal` | Közvetlen él |
+| `Document Loader -> Chunking Module` | Közvetlen él |
+| `Chunking Module -> text chunks` | Közvetlen él vagy legfeljebb 3 hosszú út |
+| `Embedding Model -> text chunks` | Közvetlen él vagy legfeljebb 2 hosszú út |
+| `Vector Store -> Embedding Model` | Közvetlen él |
+| `Entity Extractor -> Graph Store` | Közvetlen él |
+| `Relationship Extractor -> Graph Store` | Közvetlen él |
+| `Graph Store -> Evaluation Script` | Közvetlen él |
+| `Graph Store -> provenance metadata` | Közvetlen él |
+| `Query Engine -> Vector Store` | Közvetlen él |
+| `Query Engine -> Graph Store` | Közvetlen él |
+| `Answer Generator -> Query Engine` | Közvetlen él |
+| `Evaluation Script -> Graph Store` | Közvetlen él |
+
+## Validációs Parancs
+
+A validációs parancs:
+
+```bash
+docker compose exec backend uv run scripts/validate_graphrag_poc_sample.py
+```
+
+Nincs szükség kézi `--graphrag-root` argumentumra. A script automatikusan feloldja az aktív gráf munkaterületet.
+
+## Tényleges Validációs Kimenet
+
+A releváns kimenet:
+
+```text
+GraphRAG PoC sample validation
+Counts: {"documents": 1, "entities": 16, "relationships": 17, "text_units": 1}
+Matched relationships: 14
+Diagnostics: {"document_count": 1, "entity_count": 16, "relationship_count": 17, "text_unit_count": 1}
+INFO: Validated active graph 95dc20ab-8068-4511-bc2c-963b92d5bd2c from /app/ragtest/graphs/95dc20ab-8068-4511-bc2c-963b92d5bd2c
+PASS
+```
+
+## Egyező Kapcsolatok
+
+A validátor mind a 14 várt kapcsolatellenőrzést egyeztette:
+
+| Egyező kapcsolat | Egyezéstípus |
+|---|---|
+| `GraphRAG PoC -> vector retrieval` | Közvetlen |
+| `GraphRAG PoC -> graph traversal` | Közvetlen |
+| `Document Loader -> Chunking Module` | Közvetlen |
+| `Chunking Module -> text chunks` | Legfeljebb 3 hosszú út |
+| `Embedding Model -> text chunks` | Legfeljebb 2 hosszú út |
+| `Vector Store -> Embedding Model` | Közvetlen |
+| `Entity Extractor -> Graph Store` | Közvetlen |
+| `Relationship Extractor -> Graph Store` | Közvetlen |
+| `Graph Store -> Evaluation Script` | Közvetlen |
+| `Graph Store -> provenance metadata` | Közvetlen |
+| `Query Engine -> Vector Store` | Közvetlen |
+| `Query Engine -> Graph Store` | Közvetlen |
+| `Answer Generator -> Query Engine` | Közvetlen |
+| `Evaluation Script -> Graph Store` | Közvetlen |
+
+## Eredmény Értelmezése
+
+A validáció sikeres volt.
+
+Az indexelt gráf tartalma:
+
+- `1` dokumentum,
+- `1` szövegegység,
+- `16` entitás,
+- `17` kapcsolat.
+
+Az `1` dokumentum és `1` szövegegység darabszámok vártak, mert a korpuszt egy összevont fájlként töltöttem fel.
+
+A validátor ezt jelenti:
+
+```text
+Matched relationships: 14
+```
+
+Ez azt jelenti, hogy mind a 14 várt GraphRAG PoC kapcsolatellenőrzés megtalálható volt. Nem azt jelenti, hogy a gráf csak 14 kapcsolatot tartalmaz. A gráf összesen 17 kapcsolatot tartalmaz; a további kapcsolatokat a GraphRAG a minimálisan várt validációs szerződésen túl vonta ki.
+
+## Gráfvizualizáció Értelmezése
+
+Két képernyőképet is megvizsgáltam a frontend gráfvizualizációjából. Ugyanazt az indexelt `graphrag_poc_all.txt` gráfot mutatják, de nem ugyanazt a szűrt nézetablakot.
+
+A frontend gráfnézetének több módja van:
+
+- `Main`: a legnagyobb összefüggő komponenst mutatja.
+- `Connected`: azokat a csomópontokat mutatja, amelyeknek legalább egy élük van.
+- `All`: minden gráfcsomópontot mutat, beleértve a legnagyobb komponensen kívüli csomópontokat is.
+
+### 1. Kép: Fő Pipeline Komponens
+
+Az első kép az indexelt gráf fő pipeline-komponensét mutatja.
+
+Látható csomópontok többek között:
+
+- `Relationship Extractor`
+- `Entity Extractor`
+- `Graph Store`
+- `Embedding Model`
+- `Provenance Metadata`
+- `Document Loader`
+- `Answer Generator`
+- `Vector Store`
+- `Query Engine`
+- `Chunking Module`
+- `Text Chunks`
+- `Indexing Pipeline`
+- `Evaluation Script`
+
+Ez a nézet hasznos volt az operatív GraphRAG pipeline vizsgálatához. A központi szerkezet a `Graph Store`, amely kapcsolódik a kivonáshoz, értékeléshez, provenienciaadatokhoz, lekérdezéshez és lekéréshez kapcsolódó komponensekhez. Ez illeszkedik a várt projektarchitektúrához: a gráftároló a kivont gráfszerkezet perzisztencia-pontja, és az értékelés, valamint a lekérdezéskori gráfbejárás is újrahasználja.
+
+Az első kép nem mutatja a `GraphRAG PoC`, `Vector Retrieval` vagy `Graph Traversal` csomópontokat. Ezek a csomópontok nem hiányoznak az indexből; a nézetablakban megjelenített legnagyobb összefüggő komponensen kívül vannak.
+
+### 2. Kép: Teljes Gráf Külön Lekérési-Stratégia Komponenssel
+
+A második kép szélesebb gráfnézetet mutat. Tartalmazza ugyanazt a fő pipeline-komponenst, és alul egy külön kisebb komponenst is mutat:
+
+```text
+GraphRAG PoC -> Vector Retrieval
+GraphRAG PoC -> Graph Traversal
+```
+
+Ez magyarázza, miért látható két gráfterület. Ezek nem két külön teszt és nem két külön index. Ugyanazon indexelt gráfon belüli két szétkapcsolt összefüggő komponensről van szó.
+
+A szétválás azért történt, mert a GraphRAG ezt vonta ki:
+
+- az implementációs pipeline-t egy összefüggő komponensként,
+- a magas szintű lekérési-stratégia állítást egy másik összefüggő komponensként.
+
+A forrásszöveg azt mondja, hogy a GraphRAG PoC hibrid lekérést használ, és a hibrid lekérés a vektoros lekérést és a gráfbejárást kombinálja. A GraphRAG ezt az állítást a `GraphRAG PoC`-től a `Vector Retrieval` és `Graph Traversal` felé mutató élekként reprezentálta, de nem vont ki további áthidaló élt a `GraphRAG PoC` és a fő implementációs komponens között, például `GraphRAG PoC -> Query Engine`, `GraphRAG PoC -> Vector Store` vagy `GraphRAG PoC -> Graph Store`.
+
+Mivel nem lett kivonva áthidaló él, a frontend elrendezés helyesen különíti el a lekérési-stratégia komponenst a fő pipeline-komponenstől.
+
+### Vizuális Kódolás
+
+A csomópontszínek a GraphRAG által visszaadott és a frontend által renderelt entitástípusokat követik:
+
+- A kék csomópontok többnyire `ORGANIZATION` típusú entitások. Ebben a mintában a GraphRAG ezt a típust sok szoftverkomponensre használta, például `Graph Store`, `Vector Store`, `Chunking Module` és `Document Loader`.
+- A narancssárga csomópontok `EVENT` típusú entitások, például `Evaluation Script`, `Indexing Pipeline`, `GraphRAG PoC` és `Graph Traversal`.
+- A fehér `Vector Retrieval` csomópontnak nincs erős leképezett entitástípusa a kivont kimenetben, ezért visszaesik az alapértelmezett csomópontstílusra.
+
+A gráf ezért szerkezetileg hasznos akkor is, ha az entitástípus-címkék szemantikailag nem tökéletesek. Ennél a PoC-nál a fontos validációs cél a kivont entitás-kapcsolat szerkezet, nem pedig a GraphRAG által minden szoftverfogalomhoz rendelt pontos típus.
+
+### A Különbség Értelmezése
+
+A két kép közötti különbség várt:
+
+| Szempont | 1. kép | 2. kép |
+|---|---|---|
+| Fő cél | A legnagyobb operatív pipeline-komponens vizsgálata | A teljes összefüggő gráfkimenet vizsgálata |
+| Látható gráfterjedelem | Fő összefüggő komponens | Fő komponens plusz a külön lekérési-stratégia komponens |
+| Mutatja a `GraphRAG PoC` csomópontot | Nem | Igen |
+| Mutatja a `Vector Retrieval` és `Graph Traversal` csomópontokat | Nem | Igen |
+| Legjobb használat | Pipeline/debug nézet | Teljes validációs/inspekciós nézet |
+
+Ez megerősítette számomra, hogy az indexelt gráf tartalmazza mind az implementációs pipeline-t, mind a magas szintű hibrid lekérési koncepciót. Az egyetlen korlát az, hogy a modell nem kapcsolta össze ezt a két részt egyetlen komponenssé. Ezt a jelenlegi validáció szempontjából elfogadhatónak tartottam, mert a validátor explicit módon ellenőrzi a gráf mindkét részét.
+
+## Szerződésmódosítás a Validáció Során
+
+Az első validációs próbálkozás azért bukott el, mert az eredeti várt gráfszerződésem túl szó szerinti volt. Több fogalmat önálló entitásként várt:
+
+- `source metadata`
+- `hybrid retrieval`
+- `embeddings`
+- `software components`
+- `graph edges`
+- `entities and relationships`
+- `source excerpts and graph context`
+- `source chunks`
+- `extracted graph with expected reference graph`
+- `answer traceability`
+
+Az indexelt gráf ezek közül sok elképzelést továbbra is reprezentált, de nem mindig önálló gráfcsomópontként. Például:
+
+- A `TEXT CHUNKS` csomópontként lett kivonva.
+- A `VECTOR RETRIEVAL` és `GRAPH TRAVERSAL` lekéréshez kapcsolódó csomópontokként lettek kivonva.
+- A `PROVENANCE METADATA` csomópontként lett kivonva.
+- A `source metadata`, `hybrid retrieval` és answer traceability leírásokban vagy támogató szövegben jelent meg, nem pedig kötelező önálló entitásként.
+- A `Query Engine` a `Vector Store` és `Graph Store` csomópontokhoz kapcsolódott, nem pedig közvetlenül a `vector retrieval` és `graph traversal` csomópontokhoz.
+
+A várt gráfszerződést úgy módosítottam, hogy azt a stabil gráfszerkezetet validálja, amelyet a GraphRAG ténylegesen kivont, miközben továbbra is ellenőrzi a kívánt pipeline-viselkedést.
+
+Ezt a módosítást megfelelőnek tartom ehhez a PoC-hoz, mert a validátornak a minimálisan megbízható gráfszerkezetet kell tesztelnie, nem pedig arra kell kényszerítenie a modellt, hogy minden főnévi kifejezésből külön csomópontot hozzon létre.
+
+## Figyelmeztetések Értelmezése
+
+A parancs harmadik féltől származó csomagok figyelmeztetéseit is kiírta:
+
+```text
+LiteLLM: could not pre-load bedrock-runtime response stream shape
+LiteLLM: could not pre-load sagemaker-runtime response stream shape
+SyntaxWarning: invalid escape sequence
+```
+
+Ezek a figyelmeztetések nem validációs hibák.
+
+A LiteLLM figyelmeztetések azt jelzik, hogy az opcionális AWS Bedrock és SageMaker streamelési támogatás nem volt elérhető, mert a `botocore` nincs telepítve. Ez a teszt nem használ Bedrockot vagy SageMakert.
+
+A `SyntaxWarning` üzenetek telepített harmadik féltől származó könyvtárakból erednek, és nem befolyásolják a GraphRAG PoC minta validációs eredményét.
+
+## Saját Következtetés
+
+A következtetésem az, hogy a GraphRAG PoC mintaindex érvényes.
+
+Az aktív indexelt gráf tartalmazza a várt kurzusdokumentációs pipeline-komponenseket és mind a 14 várt kapcsolatellenőrzést. Azt is ellenőriztem, hogy a validátor helyesen támogatja a többgráfos munkaterület-elrendezést és az egyfájlos összevont feltöltési munkafolyamatot.
+
+Ehhez a projekthez ezt a mintát hasznosabbnak tartom, mint egy kitalált vállalati szabályzatkorpuszt, mert pontosan azokat a fogalmakat validálja, amelyeket a projekt leír: betöltés, darabolás, beágyazások, vektoros lekérés, gráfépítés, gráftárolás, forrásalapú válaszgenerálás és értékelés.
+
+</details>
