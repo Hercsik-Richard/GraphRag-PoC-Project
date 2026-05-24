@@ -1,6 +1,3 @@
-<details open>
-<summary>English</summary>
-
 **Language / Nyelv:** [English](#english) | [Magyar](#magyar)
 
 <a id="english"></a>
@@ -326,12 +323,8 @@ The weakest results were the annus mirabilis and Roosevelt-letter questions, whe
 
 My practical takeaway is that the most important next step is not another query-model upgrade. The query model is already good enough to expose the problem clearly. I would improve the indexed graph and add source/hybrid retrieval so that relevant text evidence is available before answer generation.
 
-</details>
 
 <a id="magyar"></a>
-
-<details>
-<summary>Magyar</summary>
 
 # Második Teszt - Local Eredmények
 
@@ -653,5 +646,3 @@ A legerősebb eredmény a Nobel-díj kérdése volt, ahol a Local mód illeszked
 A leggyengébb eredmények az annus mirabilis és a Roosevelt-levél kérdések voltak, ahol a rendszer tévesen azt állította, hogy a forrás nem tartalmaz információt. Ezeket a hibákat lekérési és gráfindex-minőségi problémának látom.
 
 A gyakorlati tanulságom az, hogy a legfontosabb következő lépés nem egy újabb lekérdezésimodell-frissítés. A lekérdezési modell már elég jó ahhoz, hogy világosan feltárja a problémát. A következő lépésként az indexelt gráfot javítanám, és forrás-/hibrid lekérést adnék hozzá, hogy a releváns szöveges bizonyíték a válaszgenerálás előtt rendelkezésre álljon.
-
-</details>

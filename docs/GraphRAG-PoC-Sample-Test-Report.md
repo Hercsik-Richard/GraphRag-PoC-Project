@@ -1,6 +1,3 @@
-<details open>
-<summary>English</summary>
-
 **Language / Nyelv:** [English](#english) | [Magyar](#magyar)
 
 <a id="english"></a>
@@ -349,12 +346,8 @@ The active indexed graph contains the expected course-documentation pipeline com
 
 For this project, I consider this sample more useful than a fictional enterprise-policy corpus because it validates the exact concepts the project describes: ingestion, chunking, embeddings, vector retrieval, graph construction, graph storage, source-grounded answer generation, and evaluation.
 
-</details>
 
 <a id="magyar"></a>
-
-<details>
-<summary>Magyar</summary>
 
 # GraphRAG PoC Mintateszt Jelentés
 
@@ -699,5 +692,3 @@ A következtetésem az, hogy a GraphRAG PoC mintaindex érvényes.
 Az aktív indexelt gráf tartalmazza a várt kurzusdokumentációs pipeline-komponenseket és mind a 14 várt kapcsolatellenőrzést. Azt is ellenőriztem, hogy a validátor helyesen támogatja a többgráfos munkaterület-elrendezést és az egyfájlos összevont feltöltési munkafolyamatot.
 
 Ehhez a projekthez ezt a mintát hasznosabbnak tartom, mint egy kitalált vállalati szabályzatkorpuszt, mert pontosan azokat a fogalmakat validálja, amelyeket a projekt leír: betöltés, darabolás, beágyazások, vektoros lekérés, gráfépítés, gráftárolás, forrásalapú válaszgenerálás és értékelés.
-
-</details>

@@ -1,6 +1,3 @@
-<details open>
-<summary>English</summary>
-
 **Language / Nyelv:** [English](#english) | [Magyar](#magyar)
 
 <a id="english"></a>
@@ -125,12 +122,8 @@ For this exact Einstein test, I would only count the GraphRAG answer as successf
 
 Based on the output I inspected, the current GraphRAG response did not meet this bar.
 
-</details>
 
 <a id="magyar"></a>
-
-<details>
-<summary>Magyar</summary>
 
 # Első Tesztfuttatás Eredménye
 
@@ -251,5 +244,3 @@ Ebben a konkrét Einstein-tesztben csak akkor tekinteném sikeresnek a GraphRAG-
 - A Roosevelt-levél a nukleáris fegyverek fejlesztésével kapcsolatos félelmekhez kötődik, nem ahhoz, hogy Einstein közvetlenül építette volna az atombombát.
 
 A megfigyelt kimenet alapján a jelenlegi GraphRAG-válasz nem érte el ezt a mércét.
-
-</details>

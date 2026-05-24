@@ -1,6 +1,3 @@
-<details open>
-<summary>English</summary>
-
 **Language / Nyelv:** [English](#english) | [Magyar](#magyar)
 
 <a id="english"></a>
@@ -206,12 +203,8 @@ The baseline Gemini answer was stronger as a standalone essay, but weaker as a s
 - I would also require claim-level source evidence for all major historical and scientific claims.
 - The GraphRAG answer would be stronger if it added slightly deeper causal explanations and avoided overly strong claims such as saying the Roosevelt letter directly “launched” the Manhattan Project.
 
-</details>
 
 <a id="magyar"></a>
-
-<details>
-<summary>Magyar</summary>
 
 # Harmadik Teszt Eredményei
 
@@ -413,5 +406,3 @@ Az alap Gemini-válasz erősebb önálló esszéként, de gyengébb szigorú ind
 - A következő promptverzióban explicit módon előírnám: “Answer in English.”
 - Emellett állításszintű forrásbizonyítékot is kérnék minden fő történeti és tudományos állításhoz.
 - A GraphRAG-válasz akkor lenne erősebb, ha valamivel mélyebb oksági magyarázatokat adna, és elkerülné az olyan túl erős állításokat, mint hogy a Roosevelt-levél közvetlenül “elindította” a Manhattan-tervet.
-
-</details>

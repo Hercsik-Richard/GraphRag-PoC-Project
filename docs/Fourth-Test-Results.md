@@ -1,6 +1,3 @@
-<details open>
-<summary>English</summary>
-
 **Language / Nyelv:** [English](#english) | [Magyar](#magyar)
 
 <a id="english"></a>
@@ -376,12 +373,8 @@ The new `gemini-embedding-2` run confirms that the pipeline is source-grounded a
 
 The earlier Embedding 1 GraphRAG answer remains the better final answer because it handled the 1905 scientific section more accurately. The Embedding 2 rerun is still valuable: it shows that the retrieval layer is stable, but it also exposes that final answer quality depends heavily on prompt constraints and evidence-use discipline, not only on embedding model strength.
 
-</details>
 
 <a id="magyar"></a>
-
-<details>
-<summary>Magyar</summary>
 
 # Negyedik Teszt Eredményei: Teljes Gemini 3.1 Flash Lite GraphRAG vs Alap Gemini 3.1 Flash Lite
 
@@ -753,5 +746,3 @@ Ugyanakkor a jelenlegi `gemini-embedding-2` újrafuttatás megmutatta számomra,
 Az új `gemini-embedding-2` futás megerősíti, hogy a pipeline forrásalapú és a megfelelő bizonyítékot kéri le, de az ellenőrzésem alapján nem teljesíti felül a korábbi negyedik tesztes GraphRAG-választ.
 
 A korábbi Embedding 1 GraphRAG-válasz marad a jobb végső válasz, mert pontosabban kezelte az 1905-ös tudományos szakaszt. Az Embedding 2 újrafuttatás továbbra is értékes: megmutatja, hogy a lekérési réteg stabil, de azt is feltárja, hogy a végső válasz minősége erősen függ a promptkorlátoktól és a bizonyítékhasználati fegyelemtől, nem csak a beágyazási modell erejétől.
-
-</details>
